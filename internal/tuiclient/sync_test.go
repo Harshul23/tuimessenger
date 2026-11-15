@@ -222,3 +222,29 @@ func TestReactionInSameSync(t *testing.T) {
 		t.Errorf("the message as sent to the TUI should count the 👍: %+v", msg)
 	}
 }
+
+// Our reaction arriving in a later sync, then its redaction: each time the TUI gets the message again with
+// own_reactions up to date (migration 29's triggers), which is what the TUI's reaction toggle reads.
+func TestOwnReactionsFollowSync(t *testing.T) {
+	mine := `{"type":"m.reaction","event_id":"$r:x","sender":"@me:x","origin_server_ts":2000,
+		"content":{"m.relates_to":{"rel_type":"m.annotation","event_id":"$a:x","key":"👍"}}}`
+	theirs := `{"type":"m.reaction","event_id":"$l:x","sender":"@lena:x","origin_server_ts":2500,
+		"content":{"m.relates_to":{"rel_type":"m.annotation","event_id":"$a:x","key":"❤️"}}}`
+	redact := `{"type":"m.room.redaction","event_id":"$d:x","sender":"@me:x","origin_server_ts":3000,
+		"redacts":"$r:x","content":{"redacts":"$r:x"}}`
+	events := make(chan any, 50)
+	loggedIn(t, syncServer(t,
+		body(joinSync("2", msgA)), body(joinSync("3", mine, theirs)), body(joinSync("4", redact)),
+	), func(evt any) { events <- evt })
+	roomSync(t, events, "!r:x")
+
+	msg := eventIn(roomSync(t, events, "!r:x").Events, "$a:x")
+	if msg == nil || len(msg.OwnReactions) != 1 || len(msg.OwnReactions["👍"]) != 1 || msg.OwnReactions["👍"][0] != "$r:x" {
+		t.Fatalf("after our 👍 the TUI should get the message with own_reactions {👍: [$r:x]}: %+v", msg)
+	}
+	// Before the json() fix in migration 29 this sync crashed hicli's syncer: the trigger stored the list as a string.
+	msg = eventIn(roomSync(t, events, "!r:x").Events, "$a:x")
+	if msg == nil || len(msg.OwnReactions["👍"]) != 0 {
+		t.Errorf("after redacting it the TUI should get the message with no own 👍 left (the key may stay, empty): %+v", msg)
+	}
+}
