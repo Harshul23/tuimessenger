@@ -154,6 +154,60 @@ func TestSendMessageIDs(t *testing.T) {
 	}
 }
 
+// WhatsApp and Instagram reactions have no emoji ID, so every reaction by one person on a message has the same stable
+// ID. A reaction after a removed one used to be dropped as its duplicate (invisible in the client, while the bridge
+// believed it was stored); now it gets the next generation of the ID. Resends are still recognised at each step.
+func TestReactionAfterRemovalIsSaved(t *testing.T) {
+	ctx := context.Background()
+	c, st := newTestConnector(t)
+	ghost := c.GhostIntent("alice")
+	roomID := createRoom(t, c, ghost.GetMXID())
+	msg, err := ghost.SendMessage(ctx, roomID, event.EventMessage, text("hi"), &bridgev2.MatrixSendExtra{
+		MessageMeta: &database.Message{Room: networkid.PortalKey{ID: "chat1"}, ID: "msg1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := &database.Reaction{Room: networkid.PortalKey{ID: "chat1"}, MessageID: "msg1", SenderID: "alice"}
+	react := func(key string) id.EventID {
+		t.Helper()
+		content := &event.Content{Parsed: &event.ReactionEventContent{RelatesTo: event.RelatesTo{
+			Type: event.RelAnnotation, EventID: msg.EventID, Key: key}}}
+		resp, err := ghost.SendMessage(ctx, roomID, event.EventReaction, content, &bridgev2.MatrixSendExtra{ReactionMeta: meta})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.EventID
+	}
+	remove := func(target id.EventID) {
+		t.Helper()
+		redaction := &event.Content{Parsed: &event.RedactionEventContent{Redacts: target}}
+		if _, err := ghost.SendMessage(ctx, roomID, event.EventRedaction, redaction, &bridgev2.MatrixSendExtra{ReactionMeta: meta}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first := react("❤")
+	if again := react("❤"); again != first {
+		t.Errorf("a resend of a live reaction is the same event: %s vs %s", again, first)
+	}
+	remove(first)
+	second := react("👍")
+	if second == first {
+		t.Fatal("a reaction after a removed one must not reuse the removed one's ID (it was dropped)")
+	}
+	if evt, _ := st.GetEvent(ctx, second); evt == nil {
+		t.Fatal("the new reaction should be saved")
+	}
+	before := st.LastPos()
+	if again := react("👍"); again != second || st.LastPos() != before {
+		t.Errorf("a resend of the new reaction is still recognised: %s vs %s", again, second)
+	}
+	remove(second)
+	if third := react("❤"); third == first || third == second {
+		t.Errorf("each removal moves on to a new ID: %s", third)
+	}
+}
+
 func TestBatchSendOrder(t *testing.T) {
 	ctx := context.Background()
 	c, st := newTestConnector(t)

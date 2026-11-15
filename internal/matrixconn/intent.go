@@ -53,6 +53,11 @@ func (i *Intent) SendMessage(ctx context.Context, roomID id.RoomID, evtType even
 		if err := i.c.ensureJoined(ctx, w, roomID, i.mxid); err != nil {
 			return err
 		}
+		if evtType == event.EventReaction {
+			if err := i.c.renewRemovedReactionID(ctx, evt); err != nil {
+				return err
+			}
+		}
 		return i.c.addEventOnce(ctx, w, evt)
 	})
 	if err != nil {
