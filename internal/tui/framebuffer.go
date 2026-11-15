@@ -171,6 +171,11 @@ func (fb *frameBuffer) SetContent(x, y int, mainc rune, combc []rune, style tcel
 	if x < 0 || y < 0 || x >= fb.w || y >= fb.h {
 		return
 	}
+	// ❤️ is 2 columns in Ghostty but 1 to tcell, so it's drawn as the text ❤, which took the text's colour (grey in
+	// reactions). Red keeps it a heart; on a coloured background (selection, pills) red could vanish, so not there.
+	if _, bg, _ := style.Decompose(); mainc == textHeart && bg == tcell.ColorDefault {
+		style = style.Foreground(emojiHeartRed)
+	}
 	mainc, comb, blankNext := terminalSafe(mainc, combc)
 	if x > 0 && isMismeasuredMark(mainc) {
 		// Ghostty stacks the mark on the previous letter with zero advance;
@@ -212,9 +217,13 @@ func terminalSafe(mainc rune, combc []rune) (rune, []rune, bool) {
 }
 
 const (
-	zwj     = '\u200d'
-	emojiVS = '\ufe0f'
+	zwj       = '\u200d'
+	emojiVS   = '\ufe0f'
+	textHeart = '\u2764'
 )
+
+// emojiHeartRed is the red of the ❤️ emoji, the same in every theme.
+var emojiHeartRed = tcell.NewHexColor(0xe0245e)
 
 // isMismeasuredMark reports a non-spacing mark that go-runewidth gives a full
 // column although terminals draw it with zero width, e.g. Devanagari े ु ं ्.

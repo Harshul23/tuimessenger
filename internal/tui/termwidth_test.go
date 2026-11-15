@@ -82,3 +82,28 @@ func TestJoinedEmojiDontShiftTheRow(t *testing.T) {
 		t.Errorf("X at column %d, want %d", gotX, wantX)
 	}
 }
+
+// ❤ is drawn in the emoji's red (it's the ❤️ emoji without its 2-column selector), also in grey reaction rows; on
+// a coloured background it keeps its colour.
+func TestHeartIsRed(t *testing.T) {
+	grey := tcell.StyleDefault.Foreground(tcell.ColorGray)
+	fb := newFakeScreen(12, 1)
+	mauview.PrintWithStyle(fb, "👍 2  ❤\ufe0f", 0, 0, 12, mauview.AlignLeft, grey)
+	var heart *frameCell
+	for i := range fb.cells {
+		if fb.cells[i].main == '❤' {
+			heart = &fb.cells[i]
+		}
+	}
+	if heart == nil {
+		t.Fatal("no heart drawn")
+	}
+	if fg, _, _ := heart.style.Decompose(); fg != emojiHeartRed {
+		t.Errorf("reaction ❤ should be red, got %v", fg)
+	}
+	sel := tcell.StyleDefault.Background(tcell.ColorRed).Foreground(tcell.ColorWhite)
+	fb.SetContent(0, 0, '❤', nil, sel)
+	if fg, _, _ := fb.cells[0].style.Decompose(); fg != tcell.ColorWhite {
+		t.Errorf("on a selection bar the heart keeps its colour, got %v", fg)
+	}
+}
