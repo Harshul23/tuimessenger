@@ -2,14 +2,12 @@ package tui
 
 import (
 	"strconv"
-	"sync/atomic"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 	"go.mau.fi/mauview"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/whyyor/tuimessenger/internal/tui/debug"
 	"github.com/whyyor/tuimessenger/internal/tui/lib/emoji"
 	"github.com/whyyor/tuimessenger/internal/tui/widget"
 )
@@ -24,7 +22,6 @@ const pickerMaxResults = 8
 type ReactPicker struct {
 	room    *RoomView
 	eventID id.EventID
-	own     atomic.Pointer[map[string]id.EventID]
 	quick   []string
 	insert  bool
 
@@ -43,14 +40,7 @@ type ReactPicker struct {
 }
 
 func (view *RoomView) OpenReactPicker(eventID id.EventID) {
-	picker := &ReactPicker{room: view, eventID: eventID, quick: quickReactions, cat: 1}
-	view.picker = picker
-	go func() {
-		defer debug.Recover()
-		own := view.OwnReactions(eventID)
-		picker.own.Store(&own)
-		view.parent.parent.Render()
-	}()
+	view.picker = &ReactPicker{room: view, eventID: eventID, quick: quickReactions, cat: 1}
 }
 
 // OpenEmojiPicker is Ctrl+e: recent emoji, / to search, picks go into the composer.
@@ -72,12 +62,12 @@ func (view *RoomView) closePicker() {
 	RequestRepaint()
 }
 
+// isOwn reads the message as the store has it now, so the picker follows reactions while it's open.
 func (p *ReactPicker) isOwn(key string) bool {
-	own := p.own.Load()
-	if own == nil {
+	if p.room == nil || p.insert {
 		return false
 	}
-	for ownKey := range *own {
+	for ownKey := range p.room.OwnReactions(p.eventID) {
 		if sameReaction(ownKey, key) {
 			return true
 		}
