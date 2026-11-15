@@ -12,6 +12,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/whyyor/tuimessenger/internal/hicli/jsoncmd"
+	"github.com/whyyor/tuimessenger/internal/tui/messages"
 )
 
 // messageStatusEvent is how the bridges report whether something reached the network (sent, delivered, failed).
@@ -89,7 +90,7 @@ func (ui *App) reportSendFailures(evt *jsoncmd.SyncComplete) {
 
 // reportSendError shows why the backend refused one of our sends ("not sent" just means it's still on its way).
 func reportSendError(evt *jsoncmd.SendComplete) {
-	if evt.Event == nil || evt.Event.SendError == "" || evt.Event.SendError == "not sent" || !firstReport(evt.Event.ID) {
+	if !messages.SendFailed(evt.Event) || !firstReport(evt.Event.ID) {
 		return
 	}
 	toasts.Show(toastError, "Not sent: "+evt.Event.SendError)

@@ -2,6 +2,7 @@ package tuiclient
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/dbutil"
 	"go.mau.fi/util/jsontime"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/whyyor/tuimessenger/internal/hicli"
@@ -41,6 +43,8 @@ func syncServer(t *testing.T, syncs ...func() string) *httptest.Server {
 				return
 			}
 			_, _ = w.Write([]byte(syncs[i]()))
+		case strings.Contains(r.URL.Path, "/send/"):
+			_, _ = w.Write([]byte(`{"event_id":"$sent:x"}`))
 		case strings.HasSuffix(r.URL.Path, "/filter"):
 			_, _ = w.Write([]byte(`{"filter_id":"1"}`))
 		default:
@@ -220,6 +224,23 @@ func TestReactionInSameSync(t *testing.T) {
 	msg := eventIn(room.Events, "$a:x")
 	if msg == nil || msg.Reactions["👍"] != 1 {
 		t.Errorf("the message as sent to the TUI should count the 👍: %+v", msg)
+	}
+}
+
+// A synchronous send that worked returns the server's event ID but still says "not sent" (the in-memory copy isn't
+// cleared; the database is). The TUI's reaction toggle relies on both: the real ID to wait for, and treating
+// "not sent" as not failed (messages.SendFailed).
+func TestSynchronousSendReturnsRealID(t *testing.T) {
+	events := make(chan any, 50)
+	hc := loggedIn(t, syncServer(t, body(joinSync("2", msgA))), func(evt any) { events <- evt })
+	roomSync(t, events, "!r:x")
+	content := json.RawMessage(`{"m.relates_to":{"rel_type":"m.annotation","event_id":"$a:x","key":"👍"}}`)
+	sent, err := hc.Send(context.Background(), "!r:x", event.EventReaction, content, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent.ID != "$sent:x" || sent.SendError != "not sent" {
+		t.Errorf("want the server's ID with SendError still \"not sent\", got %q / %q", sent.ID, sent.SendError)
 	}
 }
 

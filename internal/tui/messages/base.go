@@ -144,7 +144,7 @@ func newUIMessage(
 // If the message is an emote, the sender is blank.
 // In any other case, the sender is the display name of the user who sent the message.
 func (msg *UIMessage) GetSenderName() string {
-	if msg.Event.SendError != "" && msg.Event.SendError != "not sent" {
+	if SendFailed(msg.Event) {
 		return "Error"
 	} else if msg.Event.Pending {
 		return "Sending..."
@@ -172,7 +172,7 @@ func (msg *UIMessage) NotificationContent() string {
 }
 
 func (msg *UIMessage) getStateSpecificColor() tcell.Color {
-	if msg.Event.SendError != "" && msg.Event.SendError != "not sent" {
+	if SendFailed(msg.Event) {
 		return tcell.ColorRed
 	} else if msg.Event.Pending {
 		return tcell.ColorGray
@@ -395,4 +395,10 @@ func (msg *UIMessage) String() string {
 
 func (msg *UIMessage) PlainText() string {
 	return msg.Renderer.PlainText()
+}
+
+// SendFailed: hicli marks our events "not sent" until the server's copy comes back down sync (also after a
+// successful synchronous send), so only another SendError text is a failure.
+func SendFailed(evt *database.Event) bool {
+	return evt != nil && evt.SendError != "" && evt.SendError != "not sent"
 }

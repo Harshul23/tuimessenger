@@ -1146,7 +1146,7 @@ func (view *RoomView) SendReaction(eventID id.EventID, reaction string) id.Event
 		Content:     contentJSON,
 		Synchronous: true, // returns once sent, with the real event ID (not the local "~txn" one)
 	})
-	if err == nil && resp.SendError != "" {
+	if err == nil && messages.SendFailed(resp) {
 		err = errors.New(resp.SendError)
 	}
 	if err != nil {
