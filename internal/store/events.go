@@ -82,6 +82,13 @@ func (s *Store) GetEvent(ctx context.Context, eventID id.EventID) (*Event, error
 	return scanEvent(row)
 }
 
+// IsRedacted says whether a redaction of eventID was saved. No index on redacts: callers use it rarely.
+func (s *Store) IsRedacted(ctx context.Context, eventID id.EventID) (bool, error) {
+	var redacted bool
+	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM local_events WHERE redacts = $1)`, eventID).Scan(&redacted)
+	return redacted, err
+}
+
 // GetState returns the current state event for (type, stateKey) in a room, or nil.
 func (s *Store) GetState(ctx context.Context, roomID id.RoomID, evtType event.Type, stateKey string) (*Event, error) {
 	row := s.db.QueryRow(ctx, `
