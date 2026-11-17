@@ -97,7 +97,7 @@ func TestNoDialogUsesYazi(t *testing.T) {
 	_, _, _ = fakeToasts(t)
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "yazi-ran")
-	script := "#!/bin/sh\ntouch " + marker + "\nfor a; do case $a in --chooser-file=*) f=${a#--chooser-file=};; esac; done\n" +
+	script := "#!/bin/sh\n: > " + marker + "\nfor a; do case $a in --chooser-file=*) f=${a#--chooser-file=};; esac; done\n" +
 		": > \"$f\"\n" // picks nothing, so nothing gets attached
 	if err := os.WriteFile(filepath.Join(dir, "yazi"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
