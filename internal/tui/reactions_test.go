@@ -1,39 +1,95 @@
 package tui
 
 import (
-	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
-	"maunium.net/go/mautrix/event"
+	"go.mau.fi/util/jsontime"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/whyyor/tuimessenger/internal/hicli/cmdspec"
 	"github.com/whyyor/tuimessenger/internal/hicli/database"
+	"github.com/whyyor/tuimessenger/internal/hicli/jsoncmd"
+	"github.com/whyyor/tuimessenger/internal/rpc/store"
 	"github.com/whyyor/tuimessenger/internal/tui/lib/emoji"
 	"github.com/whyyor/tuimessenger/internal/tui/messages"
 )
 
-func reactionEvt(sender id.UserID, evtID id.EventID, key string, redacted bool) *database.Event {
-	content, _ := json.Marshal(&event.ReactionEventContent{RelatesTo: event.RelatesTo{
-		Type: event.RelAnnotation, EventID: "$msg", Key: key,
-	}})
-	evt := &database.Event{ID: evtID, Sender: sender, Type: event.EventReaction.Type, Content: content}
-	if redacted {
-		evt.RedactedBy = "$redaction"
-	}
-	return evt
+// reactedMsg puts a message with the given own_reactions into the room's store, as a sync would.
+func reactedMsg(room *store.RoomStore, own map[string][]id.EventID) {
+	room.ApplySync(&jsoncmd.SyncRoom{
+		Events: []*database.Event{{RowID: 1, TimelineRowID: 1, ID: "$msg", RoomID: room.ID,
+			Sender: "@whatsapp_lid-1:beeper.local", Type: "m.room.message", Timestamp: jsontime.UM(time.Now()),
+			OwnReactions: own}},
+		Timeline: []database.TimelineRowTuple{{Timeline: 1, Event: 1}},
+	})
 }
 
-func TestOwnReactionKeys(t *testing.T) {
-	evts := []*database.Event{
-		reactionEvt("@me:x", "$1", "👍", false),
-		reactionEvt("@other:x", "$2", "❤️", false),
-		reactionEvt("@me:x", "$3", "😂", true),
+func TestOwnReactionsFromStore(t *testing.T) {
+	_, room := bubbleView(t)
+	rv := &RoomView{Room: room}
+	reactedMsg(room, map[string][]id.EventID{"👍": {"$r1"}, "❤️": {}})
+	got := rv.OwnReactions("$msg")
+	if len(got) != 1 || len(got["👍"]) != 1 || got["👍"][0] != "$r1" {
+		t.Errorf("got %v, want only 👍 → [$r1] (an emptied ❤️ list is not a reaction)", got)
 	}
-	got := ownReactionKeys(evts, "@me:x")
-	if len(got) != 1 || got["👍"] != "$1" {
-		t.Errorf("got %v, want only 👍 → $1", got)
+	if rv.OwnReactions("$unknown") != nil {
+		t.Error("a message not in the store has no reactions")
+	}
+}
+
+// A second press waits for the first one's reaction to come back down sync, so it sees it and removes it (a toggle)
+// instead of sending a duplicate.
+func TestWaitForOwnReactionsSeesSync(t *testing.T) {
+	_, room := bubbleView(t)
+	rv := &RoomView{Room: room}
+	reactedMsg(room, nil)
+	done := make(chan struct{})
+	go func() {
+		rv.waitForOwnReactions("$msg", "$r1", nil, 5*time.Second)
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	reactedMsg(room, map[string][]id.EventID{"👍": {"$r1"}})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the wait should end as soon as the reaction comes back down sync")
+	}
+	if own := rv.OwnReactions("$msg"); len(own["👍"]) != 1 {
+		t.Errorf("after the wait the next toggle sees our 👍: %v", own)
+	}
+}
+
+func TestWaitForOwnReactionsGivesUp(t *testing.T) {
+	_, room := bubbleView(t)
+	rv := &RoomView{Room: room}
+	reactedMsg(room, map[string][]id.EventID{"👍": {"$r1"}})
+	start := time.Now()
+	rv.waitForOwnReactions("$msg", "", []id.EventID{"$r1"}, 50*time.Millisecond)
+	if time.Since(start) > time.Second {
+		t.Error("a removal that never comes back must not block the next press for long")
+	}
+}
+
+func TestOwnReactionsSettled(t *testing.T) {
+	own := map[string][]id.EventID{"👍": {"$r1"}}
+	cases := []struct {
+		added   id.EventID
+		removed []id.EventID
+		want    bool
+	}{
+		{"$r1", nil, true},
+		{"$r2", nil, false},
+		{"", []id.EventID{"$r1"}, false},
+		{"", []id.EventID{"$old"}, true},
+		{"$r1", []id.EventID{"$old"}, true},
+	}
+	for _, c := range cases {
+		if got := ownReactionsSettled(own, c.added, c.removed); got != c.want {
+			t.Errorf("added %q removed %v: got %v, want %v", c.added, c.removed, got, c.want)
+		}
 	}
 }
 

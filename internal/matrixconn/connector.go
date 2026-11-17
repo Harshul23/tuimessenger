@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -284,6 +285,30 @@ func (c *Connector) addEventOnce(ctx context.Context, w *store.Writer, evt *even
 	}
 	_, err = w.AddEvent(ctx, evt)
 	return err
+}
+
+// maxReactionGenerations bounds the search for a free reaction ID; past it the reaction gets a random one.
+const maxReactionGenerations = 1000
+
+// renewRemovedReactionID: a reaction's stable ID dedupes resends only while that reaction is live. Once it was
+// removed, the same reaction again is a new event (on WhatsApp and Instagram any later reaction by that person, as
+// they have no emoji IDs) and would otherwise be dropped as a duplicate of the removed one. So it moves on to the
+// next generation of the ID: still stable, so a resend of the new reaction is still recognised.
+func (c *Connector) renewRemovedReactionID(ctx context.Context, evt *event.Event) error {
+	base := evt.ID
+	for generation := 1; generation <= maxReactionGenerations; generation++ {
+		existing, err := c.store.GetEvent(ctx, evt.ID)
+		if err != nil || existing == nil {
+			return err
+		}
+		removed, err := c.store.IsRedacted(ctx, evt.ID)
+		if err != nil || !removed {
+			return err
+		}
+		evt.ID = id.EventID("$" + c.hashID("reaction again", string(base), strconv.Itoa(generation)) + ":" + c.serverName)
+	}
+	evt.ID = c.randomEventID()
+	return nil
 }
 
 // setRaw adds an extra JSON field to an event's content without losing what's already there.
