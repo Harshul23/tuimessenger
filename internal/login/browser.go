@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -28,9 +29,14 @@ var browserPaths = []string{
 	"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 	"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 	"/Applications/Helium.app/Contents/MacOS/Helium",
-	"/usr/bin/google-chrome",
-	"/usr/bin/chromium",
-	"/usr/bin/chromium-browser",
+}
+
+// browserCommands are the same browsers' commands on Linux (and other Unixes), looked up on PATH; distros name them
+// differently (Arch's Google Chrome is google-chrome-stable, Debian's Chromium is chromium-browser).
+var browserCommands = []string{
+	"google-chrome-stable", "google-chrome", "chromium", "chromium-browser",
+	"brave", "brave-browser", "brave-browser-stable", "microsoft-edge-stable", "microsoft-edge",
+	"vivaldi-stable", "vivaldi", "helium-browser",
 }
 
 // FindBrowser returns a Chromium-based browser to log in with, or "" if there is none (e.g. on a headless Pi).
@@ -44,7 +50,31 @@ func FindBrowser() string {
 			return path
 		}
 	}
+	for _, name := range browserCommands {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+	}
 	return ""
+}
+
+// CookieHelp tells someone without a supported browser how to log in by hand: the page, and where its cookies are.
+func CookieHelp(network string, params *bridgev2.LoginCookiesParams) string {
+	domain := ""
+	for _, f := range params.Fields {
+		for _, src := range f.Sources {
+			if src.Type == bridgev2.LoginCookieTypeCookie && src.CookieDomain != "" && domain == "" {
+				domain = strings.TrimPrefix(src.CookieDomain, ".")
+			}
+		}
+	}
+	where := "Cookies"
+	if domain != "" {
+		where += " → " + domain
+	}
+	return fmt.Sprintf("No Chrome, Chromium, Brave or Edge found, so the %s login page opened in your default browser "+
+		"(%s). Log in there, then copy each value below from its developer tools (F12 → Storage or Application → %s). "+
+		"To log in automatically instead, install Chromium or set TUIMESSENGER_BROWSER.", network, params.URL, where)
 }
 
 // headless hides the window; only tests use it, a real login needs you to see the page.
