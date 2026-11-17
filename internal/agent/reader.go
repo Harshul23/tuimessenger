@@ -271,13 +271,15 @@ func (r *Reader) message(ctx context.Context, evt *database.Event) *Message {
 	msg := &Message{
 		ID: evt.ID, Sender: r.senderName(ctx, evt.RoomID, evt.Sender), FromMe: evt.Sender == r.Account.UserID,
 		Time: evt.Timestamp.Time, Kind: kindOf(evtType, content.MsgType), Text: content.Body, Reactions: evt.Reactions,
-		Failed: evt.SendError,
+	}
+	if evt.SendError != "not sent" { // "not sent" = still on its way (see messages.SendFailed)
+		msg.Failed = evt.SendError
 	}
 	if content.RelatesTo != nil {
 		msg.ReplyTo = content.RelatesTo.GetReplyTo()
 	}
-	if evt.LastEditRowID != nil && *evt.LastEditRowID != 0 {
-		if edit, err := r.db.Event.GetByRowID(ctx, *evt.LastEditRowID); err == nil && edit != nil {
+	if evt.LastEditRowID != 0 {
+		if edit, err := r.db.Event.GetByRowID(ctx, evt.LastEditRowID); err == nil && edit != nil {
 			editRaw := edit.Content
 			if edit.DecryptedType != "" {
 				editRaw = edit.Decrypted

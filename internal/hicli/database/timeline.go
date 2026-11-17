@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"sync"
 
 	"go.mau.fi/util/dbutil"
@@ -31,15 +32,16 @@ const (
 	checkTimelineContainsQuery = `
 		SELECT EXISTS(SELECT 1 FROM timeline WHERE room_id = $1 AND event_rowid = $2)
 	`
-	findMinRowIDQuery = `SELECT MIN(rowid) FROM timeline`
+	findMinRowIDQuery = `SELECT COALESCE(MIN(rowid), 0) FROM timeline`
 	getTimelineQuery  = `
 		SELECT event.rowid, timeline.rowid,
 		       event.room_id, event_id, sender, type, state_key, timestamp, content, decrypted, decrypted_type,
 		       unsigned, local_content, transaction_id, redacted_by, relates_to, relation_type,
-		       megolm_session_id, decryption_error, send_error, reactions, last_edit_rowid, unread_type, sticky_duration
+		       megolm_session_id, decryption_error, send_error, reactions, own_reactions, last_edit_rowid,
+		       unread_type, sticky_duration
 		FROM timeline
 		JOIN event ON event.rowid = timeline.event_rowid
-		WHERE timeline.room_id = $1 AND ($2 = 0 OR timeline.rowid < $2)
+		WHERE timeline.room_id = $1 AND timeline.rowid < $2
 		ORDER BY timeline.rowid DESC
 		LIMIT $3
 	`
@@ -138,6 +140,9 @@ func (tq *TimelineQuery) Append(ctx context.Context, roomID id.RoomID, rowIDs []
 }
 
 func (tq *TimelineQuery) Get(ctx context.Context, roomID id.RoomID, limit int, before TimelineRowID) ([]*Event, error) {
+	if before == 0 {
+		before = math.MaxInt64
+	}
 	return tq.QueryMany(ctx, getTimelineQuery, roomID, before, limit)
 }
 

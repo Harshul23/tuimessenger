@@ -159,7 +159,7 @@ func isPeer(user, own id.UserID) bool {
 // tickFor picks the glyphs and colour for one of our messages.
 func (view *MessageView) tickFor(msg *messages.UIMessage, lay *bubbleLayout) (string, tcell.Color) {
 	switch {
-	case msg.SendError != "" && msg.SendError != "not sent":
+	case messages.SendFailed(msg.Event):
 		return "!", tcell.ColorRed
 	case msg.Pending:
 		return "◌", ColorStatusText

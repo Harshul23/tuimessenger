@@ -19,6 +19,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -733,8 +734,8 @@ func (view *RoomView) SetEditing(evt *database.Event) {
 	view.replying = nil
 	content := evt.GetMautrixContent().AsMessage()
 	// If the message was already edited, start from the latest edit's text.
-	if evt.LastEditRowID != nil {
-		if edit := view.Room.GetEventByRowID(*evt.LastEditRowID); edit != nil {
+	if evt.LastEditRowID != 0 {
+		if edit := view.Room.GetEventByRowID(evt.LastEditRowID); edit != nil {
 			if newContent := edit.GetMautrixContent().AsMessage().NewContent; newContent != nil {
 				content = newContent
 			}
@@ -1114,9 +1115,9 @@ func (view *RoomView) Download(url id.ContentURI, file *attachment.EncryptedFile
 	//}
 }
 
-func (view *RoomView) Redact(eventID id.EventID, reason string) {
+func (view *RoomView) Redact(eventID id.EventID, reason string) (err error) {
 	defer debug.Recover()
-	_, err := view.parent.matrix.RedactEvent(context.TODO(), &jsoncmd.RedactEventParams{
+	_, err = view.parent.matrix.RedactEvent(context.TODO(), &jsoncmd.RedactEventParams{
 		RoomID:  view.Room.ID,
 		EventID: eventID,
 		Reason:  reason,
@@ -1125,9 +1126,11 @@ func (view *RoomView) Redact(eventID id.EventID, reason string) {
 		debug.Print("Failed to delete message:", err)
 		toasts.Show(toastError, "Couldn't delete the message: "+err.Error())
 	}
+	return err
 }
 
-func (view *RoomView) SendReaction(eventID id.EventID, reaction string) {
+// SendReaction returns the reaction's event ID, or "" if sending failed.
+func (view *RoomView) SendReaction(eventID id.EventID, reaction string) id.EventID {
 	defer debug.Recover()
 	// :shortcode: works here too; Replace already adds variation selectors.
 	reaction = variationselector.Add(emoji.Replace(strings.TrimSpace(reaction)))
@@ -1137,15 +1140,21 @@ func (view *RoomView) SendReaction(eventID id.EventID, reaction string) {
 		EventID: eventID,
 		Key:     reaction,
 	}})
-	_, err := view.parent.matrix.SendEvent(context.TODO(), &jsoncmd.SendEventParams{
-		RoomID:    view.Room.ID,
-		EventType: event.EventReaction,
-		Content:   contentJSON,
+	resp, err := view.parent.matrix.SendEvent(context.TODO(), &jsoncmd.SendEventParams{
+		RoomID:      view.Room.ID,
+		EventType:   event.EventReaction,
+		Content:     contentJSON,
+		Synchronous: true, // returns once sent, with the real event ID (not the local "~txn" one)
 	})
+	if err == nil && messages.SendFailed(resp) {
+		err = errors.New(resp.SendError)
+	}
 	if err != nil {
 		view.AddServiceMessage("Failed to send reaction: %v", err)
 		view.parent.parent.Render()
+		return ""
 	}
+	return resp.ID
 }
 
 func (view *RoomView) SendMessage(msgtype event.MessageType, text string) {

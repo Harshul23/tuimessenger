@@ -86,54 +86,9 @@ func newestPeerMessage(room *store.RoomStore) *database.Event {
 	return nil
 }
 
-// reactedTo caches whether we reacted to a message, keyed by its reaction
-// total so a new reaction (ours from any device) triggers a fresh check.
-var reactedTo = struct {
-	sync.Mutex
-	byEvent map[id.EventID]reactionCheck
-}{byEvent: make(map[id.EventID]reactionCheck)}
-
-type reactionCheck struct {
-	total    int
-	mine     bool
-	inFlight bool
-}
-
-func reactionTotal(evt *database.Event) int {
-	total := 0
-	for _, n := range evt.Reactions {
-		total += n
-	}
-	return total
-}
-
-// lookupOwnReaction is swapped out in tests.
-var lookupOwnReaction = func(view *RoomView, evtID id.EventID) bool {
-	return len(view.OwnReactions(evtID)) > 0
-}
-
-// weReactedTo answers from the cache, starting a background lookup when the
-// message's reactions changed; until then it says no (hint stays).
+// weReactedTo: hicli keeps our reactions on the message (own_reactions), so this needs no lookup.
 func (view *RoomView) weReactedTo(evt *database.Event) bool {
-	total := reactionTotal(evt)
-	if total == 0 {
-		return false
-	}
-	reactedTo.Lock()
-	check, ok := reactedTo.byEvent[evt.ID]
-	stale := !ok || check.total != total
-	if stale && !check.inFlight {
-		reactedTo.byEvent[evt.ID] = reactionCheck{total: total, mine: check.mine, inFlight: true}
-		go func() {
-			mine := lookupOwnReaction(view, evt.ID)
-			reactedTo.Lock()
-			reactedTo.byEvent[evt.ID] = reactionCheck{total: total, mine: mine}
-			reactedTo.Unlock()
-			view.requestRender()
-		}()
-	}
-	reactedTo.Unlock()
-	return ok && check.mine && !stale
+	return len(liveOwnReactions(evt.OwnReactions)) > 0
 }
 
 // needsReadHint: /seen-off chat whose newest message is theirs, without a

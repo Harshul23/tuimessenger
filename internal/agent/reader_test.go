@@ -197,6 +197,25 @@ func TestChatsMessagesSearch(t *testing.T) {
 	}
 }
 
+// A message still on its way ("not sent") isn't reported as failed; a real send error is.
+func TestPendingIsNotFailed(t *testing.T) {
+	f := newFixture(t)
+	ids := f.room("!maya:x", "Maya", map[string]string{"whatsapp_15550100011": "Maya"},
+		[2]string{"", "on its way"}, [2]string{"", "refused"})
+	for evtID, sendError := range map[id.EventID]string{ids[0]: "not sent", ids[1]: "M_FORBIDDEN: no power"} {
+		if _, err := f.db.Exec(f.ctx, "UPDATE event SET send_error=$1 WHERE event_id=$2", sendError, evtID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := f.open().Messages(f.ctx, "!maya:x", 10)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("messages = %+v, %v", msgs, err)
+	}
+	if msgs[0].Failed != "" || msgs[1].Failed != "M_FORBIDDEN: no power" {
+		t.Errorf("failed = %q, %q; want only the refused one", msgs[0].Failed, msgs[1].Failed)
+	}
+}
+
 // Chats read in tuimessenger only (/seen off) count as read, like in the TUI; /clear'd chats are hidden.
 func TestLocalSeenAndCleared(t *testing.T) {
 	f := newFixture(t)

@@ -27,7 +27,7 @@ func retryKindFor(msg *messages.UIMessage, own id.UserID, networkFailed bool) re
 		return retryNone
 	case msg.Sender != own:
 		return retryNotOwn
-	case msg.SendError != "" && msg.SendError != "not sent" && msg.TransactionID != "":
+	case messages.SendFailed(msg.Event) && msg.TransactionID != "":
 		return retryResend
 	case networkFailed:
 		return retrySendCopy
