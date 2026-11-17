@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -375,6 +376,7 @@ func (view *RoomView) Draw(screen mauview.Screen) {
 		view.prevScreen = screen
 	}
 
+	validInputText(view.input)
 	// Measure at the width the input is drawn with (inputScreen.Width below):
 	// wrapping wider made the box a line short, scrolling line 1 out of view.
 	view.input.PrepareDraw(width - inputOffsetX)
@@ -545,7 +547,7 @@ func (view *RoomView) OnKeyEvent(event mauview.KeyEvent) bool {
 	// upload it instead of pasting nothing. Text pastes flow through to the
 	// input area as before.
 	if event.Key() == tcell.KeyCtrlV {
-		if text, _ := clipboard.ReadAll("clipboard"); text != "" {
+		if text, _ := readClipboardText(); text != "" {
 			if raw, ok := stickerFromToken(text); ok {
 				view.AttachSticker(raw)
 				return true
@@ -556,7 +558,7 @@ func (view *RoomView) OnKeyEvent(event mauview.KeyEvent) bool {
 			view.AttachFiles(files...)
 			return true
 		}
-		if text, _ := clipboard.ReadAll("clipboard"); strings.TrimSpace(text) == "" {
+		if text, _ := readClipboardText(); strings.TrimSpace(text) == "" {
 			go view.AttachClipboard()
 			return true
 		}
@@ -601,7 +603,7 @@ func (view *RoomView) OnPasteEvent(event mauview.PasteEvent) bool {
 		view.AttachFiles(paths...)
 		return true
 	}
-	if clip, err := clipboard.ReadAll("clipboard"); err == nil {
+	if clip, err := readClipboardText(); err == nil {
 		if restored, ok := restorePasteWhitespace(event.Text(), clip); ok {
 			return view.input.OnPasteEvent(restoredPaste{event, restored})
 		}
@@ -1277,4 +1279,20 @@ func (view *RoomView) AddServiceMessage(text string, args ...any) {
 	}
 	// A toast, not a timeline row: notices no longer shift the chat.
 	toasts.Show(classifyNotice(text), text)
+}
+
+// readClipboardText reads the clipboard as text with bytes that aren't UTF-8 turned into �: on Linux xclip and
+// wl-paste hand over whatever was copied, and such bytes in the message box crash mauview (see validInputText).
+func readClipboardText() (string, error) {
+	text, err := clipboard.ReadAll("clipboard")
+	return strings.ToValidUTF8(text, "\uFFFD"), err
+}
+
+// validInputText turns bytes that aren't UTF-8 in the message box into �. mauview's InputArea wraps text by
+// converting it to runes and back, which makes each such byte 3 bytes long and slices past the end: a crash on every
+// draw, also after a restart when the text was saved as a draft.
+func validInputText(input *mauview.InputArea) {
+	if text := input.GetText(); !utf8.ValidString(text) {
+		input.SetText(strings.ToValidUTF8(text, "\uFFFD"))
+	}
 }
