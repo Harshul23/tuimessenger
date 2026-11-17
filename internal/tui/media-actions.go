@@ -15,6 +15,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"github.com/whyyor/tuimessenger/internal/tui/debug"
+	"github.com/whyyor/tuimessenger/internal/tui/lib/open"
 	"github.com/whyyor/tuimessenger/internal/tui/messages"
 )
 
@@ -322,7 +323,7 @@ func (view *RoomView) playLink(url string) {
 	if err != nil {
 		view.AddServiceMessage("Opening %s in the browser (install mpv or yt-dlp to play it here)", url)
 		view.parent.parent.Render()
-		_ = exec.Command("open", url).Start()
+		_ = open.Open(url)
 		return
 	}
 	view.AddServiceMessage("Fetching video…")
@@ -349,12 +350,12 @@ func (view *RoomView) playLink(url string) {
 		}
 		view.AddServiceMessage("Couldn't fetch the video (%v); opening it in the browser", reason)
 		view.parent.parent.Render()
-		_ = exec.Command("open", url).Start()
+		_ = open.Open(url)
 		return
 	}
-	view.AddServiceMessage("Playing in QuickTime (install mpv to play inside the terminal)")
+	view.AddServiceMessage("%s (install mpv to play inside the terminal)", systemPlayer())
 	view.parent.parent.Render()
-	_ = exec.Command("open", path).Start()
+	_ = open.Open(path)
 }
 
 // playVideoInTerminal suspends the TUI and hands the terminal to mpv with
@@ -367,7 +368,7 @@ func (view *RoomView) playVideoInTerminal(target string, isFile bool, mpvArgs ..
 	if err != nil {
 		// No in-terminal player; hand the file to the system instead.
 		hintMissingTool("mpv")
-		_ = exec.Command("open", target).Start()
+		_ = open.Open(target)
 		return
 	}
 	StopPlayback()
@@ -407,7 +408,7 @@ func (view *RoomView) SaveOrOpenMedia(msg *messages.FileMessage, openIt bool) {
 	if err != nil {
 		view.AddServiceMessage("Failed to fetch media: %v", err)
 	} else if openIt {
-		_ = exec.Command("open", path).Start()
+		_ = open.Open(path)
 	} else {
 		view.AddServiceMessage("Saved to %s", path)
 	}

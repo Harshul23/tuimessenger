@@ -2,10 +2,12 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -152,11 +154,15 @@ func (view *RoomView) SendAttachments(caption string) {
 	}()
 }
 
-// AttachClipboard attaches files copied in Finder, else a copied image.
+// AttachClipboard attaches files copied in Finder (or a Linux file manager), else a copied image.
 func (view *RoomView) AttachClipboard() {
 	defer debug.Recover()
 	if files := clipboardFiles(); len(files) > 0 {
 		view.AttachFiles(files...)
+		return
+	}
+	if runtime.GOOS != "darwin" {
+		view.attachClipboardImage()
 		return
 	}
 	pngpaste, err := exec.LookPath("pngpaste")
@@ -181,20 +187,51 @@ func (view *RoomView) AttachClipboard() {
 	view.attachTemp(tmp)
 }
 
-// AttachPicked opens the file picker (Finder, or yazi when chosen) and
+// attachClipboardImage attaches an image copied on Linux, read with wl-paste (Wayland) or xclip (X11).
+func (view *RoomView) attachClipboardImage() {
+	data, err := readClipboard("image/png")
+	if errors.Is(err, errNoClipboardTool) {
+		hintMissingTool(clipboardTool(os.Getenv))
+		view.AddServiceMessage("Can't read the clipboard: install %s", clipboardTool(os.Getenv))
+		view.requestRender()
+		return
+	}
+	if err != nil || !isPNG(data) {
+		view.AddServiceMessage("Nothing to attach in the clipboard (copy a file or an image)")
+		view.requestRender()
+		return
+	}
+	dir := filepath.Join(os.TempDir(), "tuimessenger-attach")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		view.AddServiceMessage("Failed to prepare a temp folder: %v", err)
+		view.requestRender()
+		return
+	}
+	tmp := filepath.Join(dir, fmt.Sprintf("clipboard-%s.png", time.Now().Format("150405.000000")))
+	if err = os.WriteFile(tmp, data, 0600); err != nil {
+		view.AddServiceMessage("Failed to save the clipboard image: %v", err)
+		view.requestRender()
+		return
+	}
+	view.attachTemp(tmp)
+}
+
+// AttachPicked opens the file picker (Finder or zenity, or yazi when chosen or when there's no dialog) and
 // attaches the choice.
 func (view *RoomView) AttachPicked() {
 	defer debug.Recover()
 	var paths []string
 	var err error
-	if view.config != nil && view.config.Preferences.FilePicker == "yazi" {
-		if yazi, lookErr := exec.LookPath("yazi"); lookErr == nil {
-			paths, err = view.pickWithYazi(yazi)
-		} else {
-			toasts.Show(toastWarning, "yazi isn't installed; using Finder")
-			paths, err = finderPicker()
-		}
-	} else {
+	wantYazi := view.config != nil && view.config.Preferences.FilePicker == "yazi"
+	yazi, yaziErr := exec.LookPath("yazi")
+	noDialog := runtime.GOOS != "darwin" && !havePath("zenity")
+	switch {
+	case (wantYazi || noDialog) && yaziErr == nil:
+		paths, err = view.pickWithYazi(yazi)
+	case wantYazi:
+		toasts.Show(toastWarning, "yazi isn't installed; using the "+systemPickerName())
+		paths, err = finderPicker()
+	default:
 		paths, err = finderPicker()
 	}
 	if err != nil {
