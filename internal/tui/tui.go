@@ -135,6 +135,8 @@ func (ui *App) Run() {
 	ui.Config.Preferences.HideRoomList = !ui.Config.Preferences.SidebarOnStart
 	log := exerrors.Must(ui.Config.LogConfig.Compile())
 	exzerolog.SetupDefaults(log)
+	// Before the screen owns the terminal: ask it about kitty graphics when its name doesn't tell (e.g. herdr).
+	messages.DetectKittyGraphics(ui.Config.Preferences.ImageProtocol)
 	if ui.Backend == nil {
 		panic("tui: App.Backend must be set before Run")
 	}
