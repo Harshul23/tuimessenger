@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"os/exec"
 	"strings"
 
 	"maunium.net/go/mautrix/event"
 
+	"github.com/whyyor/tuimessenger/internal/tui/lib/open"
 	"github.com/whyyor/tuimessenger/internal/tui/messages"
 )
 
@@ -59,7 +59,7 @@ func (view *RoomView) OpenSelected(msg *messages.UIMessage) {
 	case spaceOpenFile:
 		go view.SaveOrOpenMedia(fm, true)
 	case spaceOpenLink:
-		_ = exec.Command("open", url).Start()
+		_ = open.Open(url)
 		view.AddServiceMessage("Opening %s", url)
 	}
 }
