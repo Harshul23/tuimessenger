@@ -45,7 +45,7 @@ type UserPreferences struct {
 	// ShowUserList turns on the member list (Ctrl+b); off by default.
 	ShowUserList         bool   `yaml:"-"`
 	HideRoomList         bool   `yaml:"hide_room_list" user:"-"`
-	FilePicker           string `yaml:"file_picker" enum:"finder,yazi" default:"finder" doc:"What /upload and the attach key open to pick files: the system picker (Finder) or yazi in the terminal."`
+	FilePicker           string `yaml:"file_picker" enum:"finder,yazi" default:"finder" doc:"What /upload and the attach key open to pick files: the system dialog (Finder on macOS, zenity on Linux) or yazi in the terminal."`
 	SidebarOnStart       bool   `yaml:"sidebar_on_start" default:"true" doc:"Show the chat list sidebar when tuimessenger starts (Ctrl+s toggles it for the session)."`
 	HideAliases          bool   `yaml:"hide_aliases" doc:"Keep your chat aliases out of lists and headers; they still match when searching."`
 	HideTimestamp        bool   `yaml:"hide_timestamp" doc:"Hide message times in the classic layout."`

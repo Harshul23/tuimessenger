@@ -9,8 +9,11 @@ import (
 
 // toolUses is what each optional program is for.
 var toolUses = map[string]string{
-	"ffmpeg": "GIF and video previews",
-	"mpv":    "playing GIFs and videos in the terminal",
+	"ffmpeg":       "GIF and video previews",
+	"mpv":          "playing GIFs and videos in the terminal",
+	"zenity":       "the file dialog for attachments",
+	"wl-clipboard": "pasting copied files and images",
+	"xclip":        "pasting copied files and images",
 }
 
 // shownToolHints are the tools whose hint was shown this session.

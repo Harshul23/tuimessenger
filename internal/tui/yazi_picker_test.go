@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -57,11 +58,12 @@ func TestPaletteTogglesFilePicker(t *testing.T) {
 		}
 		t.Fatalf("no %q in the palette", prefix)
 	}
-	run("File picker: Finder → yazi")
+	dialog := systemPickerName()
+	run("File picker: " + dialog + " → yazi")
 	if main.config.Preferences.FilePicker != "yazi" {
 		t.Fatalf("picker = %q", main.config.Preferences.FilePicker)
 	}
-	run("File picker: yazi → Finder")
+	run("File picker: yazi → " + dialog)
 	if main.config.Preferences.FilePicker != "" {
 		t.Errorf("back to Finder, got %q", main.config.Preferences.FilePicker)
 	}
@@ -84,5 +86,30 @@ func TestYaziPickerWaitsForYazi(t *testing.T) {
 	got, err := (&RoomView{}).pickWithYazi(yazi)
 	if err != nil || !slices.Equal(got, []string{"/Users/me/Downloads/cat.png"}) {
 		t.Errorf("the pick should come back after yazi exits, got %q %v", got, err)
+	}
+}
+
+// On Linux without zenity there's no system dialog: the picker uses yazi when it's installed.
+func TestNoDialogUsesYazi(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS always has the Finder dialog")
+	}
+	_, _, _ = fakeToasts(t)
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "yazi-ran")
+	script := "#!/bin/sh\ntouch " + marker + "\nfor a; do case $a in --chooser-file=*) f=${a#--chooser-file=};; esac; done\n" +
+		": > \"$f\"\n" // picks nothing, so nothing gets attached
+	if err := os.WriteFile(filepath.Join(dir, "yazi"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir) // yazi, no zenity
+	oldSuspend, oldFinder := suspendTerminal, finderPicker
+	t.Cleanup(func() { suspendTerminal, finderPicker = oldSuspend, oldFinder })
+	suspendTerminal = func(_ *RoomView, fn func()) { go fn() }
+	finderPicker = func() ([]string, error) { t.Error("the missing dialog was tried"); return nil, nil }
+	view := &RoomView{config: &config.Config{}, input: mauview.NewInputArea()}
+	view.AttachPicked()
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("yazi should have been used as the picker")
 	}
 }

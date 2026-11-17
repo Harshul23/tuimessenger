@@ -348,7 +348,7 @@
         },
         "file_picker": {
           "default": "finder",
-          "description": "What /upload and the attach key open to pick files: the system picker (Finder) or yazi in the terminal.",
+          "description": "What /upload and the attach key open to pick files: the system dialog (Finder on macOS, zenity on Linux) or yazi in the terminal.",
           "enum": [
             "finder",
             "yazi"

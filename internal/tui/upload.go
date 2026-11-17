@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"maunium.net/go/mautrix/event"
@@ -102,6 +103,16 @@ if (urls) for (var i = 0; i < urls.count; i++) out.push(urls.objectAtIndex(i).pa
 out.join('\n');`
 
 func clipboardFiles() []string {
+	if runtime.GOOS != "darwin" {
+		list, _ := readClipboard("text/uri-list")
+		var paths []string
+		for _, p := range filesFromURIList(string(list)) {
+			if isFile(p) {
+				paths = append(paths, p)
+			}
+		}
+		return paths
+	}
 	out, err := exec.Command("osascript", "-l", "JavaScript", "-e", clipboardFilesScript).Output()
 	if err != nil {
 		return nil
@@ -127,6 +138,9 @@ return out`
 
 // pickFiles returns the chosen files; nil with no error means cancelled.
 func pickFiles() ([]string, error) {
+	if runtime.GOOS != "darwin" {
+		return pickFilesZenity()
+	}
 	out, err := exec.Command("osascript", "-e", pickFilesScript).Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -144,7 +158,7 @@ func pickFiles() ([]string, error) {
 	return paths, nil
 }
 
-// finderPicker is the Finder dialog; swapped out in tests.
+// finderPicker is the system file dialog (Finder, or zenity on Linux); swapped out in tests.
 var finderPicker = pickFiles
 
 // suspendTerminal hands the terminal to fn via the UI loop; swapped in tests.
