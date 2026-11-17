@@ -240,3 +240,29 @@ func TestQRDrawsDarkOnLight(t *testing.T) {
 		t.Errorf("finder pattern should be dark, got %v", fg)
 	}
 }
+
+// Without a browser it can drive (e.g. only Firefox on Linux), a cookie login opens the page in the default browser
+// and says what to paste, instead of showing bare fields.
+func TestCookieLoginWithoutBrowser(t *testing.T) {
+	oldFind, oldOpen := findBrowser, openURL
+	t.Cleanup(func() { findBrowser, openURL = oldFind, oldOpen })
+	findBrowser = func() string { return "" }
+	var opened []string
+	openURL = func(u string) error { opened = append(opened, u); return nil }
+
+	url := "https://www.instagram.com/accounts/login/"
+	p := &NetworksPanel{redraw: func() {}, hide: func() {}, network: client.Network{Name: "instagram"}}
+	p.login = &client.LoginStep{LoginID: "L1", Step: &bridgev2.LoginStep{Type: bridgev2.LoginStepTypeCookies, StepID: "cookies",
+		CookiesParams: &bridgev2.LoginCookiesParams{URL: url, Fields: []bridgev2.LoginCookieField{
+			{ID: "sessionid", Required: true, Sources: []bridgev2.LoginCookieFieldSource{
+				{Type: bridgev2.LoginCookieTypeCookie, Name: "sessionid", CookieDomain: ".instagram.com"}}}}}}}
+	p.mu.Lock()
+	p.prepareStepLocked()
+	p.mu.Unlock()
+	if len(opened) != 1 || opened[0] != url {
+		t.Errorf("the login page should open in the default browser, opened %q", opened)
+	}
+	if len(p.fields) != 1 || !strings.Contains(p.status, url) || !strings.Contains(p.status, "instagram.com") {
+		t.Errorf("want the paste field and help with the page and cookie domain: %d fields, status %q", len(p.fields), p.status)
+	}
+}
