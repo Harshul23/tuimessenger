@@ -283,7 +283,7 @@ func (msg *UIMessage) DrawReactions(screen mauview.Screen) {
 	screen = mauview.NewProxyScreen(screen, 0, height-1, width, 1)
 
 	text := FormatReactions(msg.Event.Reactions)
-	mauview.PrintWithStyle(screen, text, 0, 0, width, mauview.AlignLeft, tcell.StyleDefault.Foreground(tcell.ColorGray))
+	widget.WriteEmojiLine(screen, text, 0, 0, width, tcell.StyleDefault.Foreground(tcell.ColorGray))
 }
 
 // FormatReactions renders "👍 2  ❤️": most-used first, counts only above one.

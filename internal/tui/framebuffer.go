@@ -8,6 +8,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 	"go.mau.fi/mauview"
+
+	"github.com/whyyor/tuimessenger/internal/tui/widget"
 )
 
 // mauview's Flex clears the whole screen every frame, and tcell 2.9 decides
@@ -79,6 +81,7 @@ type frameCell struct {
 	main  rune
 	comb  []rune
 	style tcell.Style
+	tail  bool // right half of a two-column emoji (widget.WideTail)
 }
 
 // frameBuffer is an in-memory mauview.Screen for one frame.
@@ -90,6 +93,7 @@ type frameBuffer struct {
 	cursorX     int
 	cursorY     int
 	cursorShown bool
+	locked      []bool // cells locked in the real screen as an emoji's right half; tcell drops locks on resize
 }
 
 func (fb *frameBuffer) begin(real mauview.Screen) {
@@ -98,20 +102,46 @@ func (fb *frameBuffer) begin(real mauview.Screen) {
 	if w != fb.w || h != fb.h || fb.cells == nil {
 		fb.w, fb.h = w, h
 		fb.cells = make([]frameCell, w*h)
+		fb.locked = make([]bool, w*h)
 	}
 	fb.style = tcell.StyleDefault
 	fb.cursorShown = false
 	fb.Fill(' ', tcell.StyleDefault)
 }
 
+// cellLocker is tcell's LockRegion: a locked cell is never drawn, and tcell moves the cursor explicitly to the
+// next cell it draws.
+type cellLocker interface {
+	LockRegion(x, y, width, height int, lock bool)
+}
+
 func (fb *frameBuffer) flush(real mauview.Screen) {
+	locker, canLock := real.(cellLocker)
 	for y := 0; y < fb.h; y++ {
 		for x := 0; x < fb.w; x++ {
-			c := &fb.cells[y*fb.w+x]
+			i := y*fb.w + x
+			c := &fb.cells[i]
 			style := themed(c.style)
+			if c.tail && canLock {
+				// The emoji to the left covers this column on screen; tcell must not draw over it.
+				if !fb.locked[i] {
+					real.SetContent(x, y, ' ', nil, style)
+					locker.LockRegion(x, y, 1, 1, true)
+					fb.locked[i] = true
+				}
+				continue
+			}
+			if fb.locked[i] {
+				locker.LockRegion(x, y, 1, 1, false)
+				fb.locked[i] = false
+			}
+			main, comb := c.main, c.comb
+			if !canLock && x+1 < fb.w && fb.cells[i+1].tail {
+				comb = nil // can't keep tcell off the next column: back to the one-column symbol
+			}
 			rm, rc, rs, _ := real.GetContent(x, y)
-			if rm != c.main || rs != style || !slices.Equal(rc, c.comb) {
-				real.SetContent(x, y, c.main, c.comb, style)
+			if rm != main || rs != style || !slices.Equal(rc, comb) {
+				real.SetContent(x, y, main, comb, style)
 			}
 		}
 	}
@@ -160,6 +190,9 @@ func (fb *frameBuffer) GetContent(x, y int) (rune, []rune, tcell.Style, int) {
 		return ' ', nil, tcell.StyleDefault, 1
 	}
 	c := fb.cells[y*fb.w+x]
+	if c.tail {
+		return widget.WideTail, nil, c.style, 1
+	}
 	width := runewidth.RuneWidth(c.main)
 	if width == 0 || c.main < ' ' {
 		return ' ', c.comb, c.style, 1
@@ -171,8 +204,13 @@ func (fb *frameBuffer) SetContent(x, y int, mainc rune, combc []rune, style tcel
 	if x < 0 || y < 0 || x >= fb.w || y >= fb.h {
 		return
 	}
-	// ❤️ is 2 columns in Ghostty but 1 to tcell, so it's drawn as the text ❤, which took the text's colour (grey in
-	// reactions). Red keeps it a heart; on a coloured background (selection, pills) red could vanish, so not there.
+	if mainc == widget.WideTail {
+		fb.setWideTail(x, y, style)
+		return
+	}
+	// ❤️ is 2 columns in Ghostty but 1 to tcell, so unless the caller gave it two (widget.WriteEmojiLine) it's drawn
+	// as the text ❤, which took the text's colour (grey in reactions). Red keeps it a heart; on a coloured background
+	// (selection, pills) red could vanish, so not there.
 	if _, bg, _ := style.Decompose(); mainc == textHeart && bg == tcell.ColorDefault {
 		style = style.Foreground(emojiHeartRed)
 	}
@@ -189,6 +227,17 @@ func (fb *frameBuffer) SetContent(x, y int, mainc rune, combc []rune, style tcel
 	if blankNext && x+1 < fb.w {
 		fb.cells[y*fb.w+x+1] = frameCell{main: ' ', style: style}
 	}
+}
+
+// setWideTail makes the emoji left of x the real two-column one: it gets its variation selector back (terminalSafe
+// dropped it), and x becomes its right half, which flush locks in tcell so it's never drawn over the emoji.
+func (fb *frameBuffer) setWideTail(x, y int, style tcell.Style) {
+	if x > 0 {
+		if prev := &fb.cells[y*fb.w+x-1]; !prev.tail && runewidth.RuneWidth(prev.main) == 1 {
+			prev.comb = []rune{emojiVS}
+		}
+	}
+	fb.cells[y*fb.w+x] = frameCell{main: ' ', style: style, tail: true}
 }
 
 // terminalSafe rewrites a cell so tcell and the terminal agree on its width.
