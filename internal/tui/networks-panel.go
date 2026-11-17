@@ -18,6 +18,7 @@ import (
 	"github.com/whyyor/tuimessenger/internal/login"
 	"github.com/whyyor/tuimessenger/internal/rpc/client"
 	"github.com/whyyor/tuimessenger/internal/tui/debug"
+	"github.com/whyyor/tuimessenger/internal/tui/lib/open"
 )
 
 // netState is the screen the Networks panel shows.
@@ -322,15 +323,26 @@ func (p *NetworksPanel) prepareStepLocked() {
 		p.busy, p.status = true, "Waiting for you…"
 		p.waitLocked()
 	case bridgev2.LoginStepTypeCookies:
-		if browser := login.FindBrowser(); browser != "" {
+		if browser := findBrowser(); browser != "" {
 			p.browser, p.busy = true, true
 			p.status = "A browser window opened: log in to " + networkName(p.network.Name) + " there. It closes by itself when done."
 			p.collectCookiesLocked(browser)
 		} else {
+			// No browser to drive: open the login page in the default one and say which values to paste.
 			p.pasteCookieFieldsLocked()
+			if params := p.login.Step.CookiesParams; params.URL != "" {
+				_ = openURL(params.URL)
+				p.status = login.CookieHelp(networkName(p.network.Name), params)
+			}
 		}
 	}
 }
+
+// openURL opens a page in the default browser; swapped out in tests.
+var openURL = open.Open
+
+// findBrowser is login.FindBrowser; swapped out in tests.
+var findBrowser = login.FindBrowser
 
 func inputPlaceholder(f bridgev2.LoginInputDataField) string {
 	switch f.Type {

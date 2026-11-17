@@ -5,6 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +95,42 @@ func TestCollectCookies(t *testing.T) {
 	}
 	if time.Since(start) < time.Second {
 		t.Error("it should wait for the logged-in page, not finish as soon as the cookies exist")
+	}
+}
+
+// On Linux browsers are commands on PATH, named differently per distro (Arch's Chrome is google-chrome-stable).
+func TestFindBrowserOnPath(t *testing.T) {
+	oldPaths := browserPaths
+	t.Cleanup(func() { browserPaths = oldPaths })
+	browserPaths = nil // as on Linux: no /Applications
+	t.Setenv("TUIMESSENGER_BROWSER", "")
+	dir := t.TempDir()
+	chrome := filepath.Join(dir, "google-chrome-stable")
+	if err := os.WriteFile(chrome, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if got := FindBrowser(); got != chrome {
+		t.Errorf("got %q, want %q", got, chrome)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := FindBrowser(); got != "" {
+		t.Errorf("no browser on PATH: got %q", got)
+	}
+	t.Setenv("TUIMESSENGER_BROWSER", "/opt/my/chrome")
+	if got := FindBrowser(); got != "/opt/my/chrome" {
+		t.Errorf("TUIMESSENGER_BROWSER should win, got %q", got)
+	}
+}
+
+func TestCookieHelp(t *testing.T) {
+	params := &bridgev2.LoginCookiesParams{URL: "https://www.instagram.com/accounts/login/", Fields: []bridgev2.LoginCookieField{
+		{ID: "sessionid", Required: true, Sources: []bridgev2.LoginCookieFieldSource{
+			{Type: bridgev2.LoginCookieTypeCookie, Name: "sessionid", CookieDomain: ".instagram.com"}}}}}
+	help := CookieHelp("Instagram", params)
+	for _, want := range []string{"Instagram login page", params.URL, "Cookies → instagram.com", "TUIMESSENGER_BROWSER"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help %q is missing %q", help, want)
+		}
 	}
 }
