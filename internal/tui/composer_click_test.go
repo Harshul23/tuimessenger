@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/zyedidia/clipboard"
 	"go.mau.fi/mauview"
 )
 
@@ -26,6 +27,9 @@ func doubleClickComposer(text string, row int) (err error) {
 			err = fmt.Errorf("panic: %v", r)
 		}
 	}()
+	// As the app does at startup (tui.go): a double-click copies the word to the primary selection, and on Linux
+	// the clipboard package has no copy command until it's initialised (nil slice: "slice bounds out of range").
+	_ = clipboard.Initialize()
 	sim := tcell.NewSimulationScreen("")
 	if err = sim.Init(); err != nil {
 		return err
