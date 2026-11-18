@@ -663,15 +663,22 @@ func (view *RoomView) OnMouseEvent(event mauview.MouseEvent) bool {
 		}
 		return true
 	}
+	x, y := event.Position()
 	switch {
-	case view.contentScreen.IsInArea(event.Position()):
+	case insideScreen(view.contentScreen, x, y):
 		return view.content.OnMouseEvent(view.contentScreen.OffsetMouseEvent(event))
-	case view.topicScreen.IsInArea(event.Position()):
+	case insideScreen(view.topicScreen, x, y):
 		return view.topic.OnMouseEvent(view.topicScreen.OffsetMouseEvent(event))
-	case view.inputScreen.IsInArea(event.Position()):
+	case insideScreen(view.inputScreen, x, y):
 		return view.input.OnMouseEvent(view.inputScreen.OffsetMouseEvent(event))
 	}
 	return false
+}
+
+// insideScreen is mauview's IsInArea without its extra row and column past the end: a double-click on the
+// composer's blank row below the text was passed to the input, which crashed indexing a line that isn't there (#46).
+func insideScreen(ss *mauview.ProxyScreen, x, y int) bool {
+	return ss != nil && x >= ss.OffsetX && x < ss.XEnd() && y >= ss.OffsetY && y < ss.YEnd()
 }
 
 func (view *RoomView) SetCompletions(completions []string) {
