@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -49,6 +50,11 @@ const ownReactionsSettle = 5 * time.Second
 // replaces whatever we had: one reaction per message, like the networks.
 func (view *RoomView) ToggleReaction(eventID id.EventID, key string) {
 	defer debug.Recover()
+	// Refuse what the network would reject (e.g. 😂 on Telegram); taking a reaction back always works.
+	if why := view.reactionRefused(key); why != "" && !containsReaction(slices.Collect(maps.Keys(view.OwnReactions(eventID))), key) {
+		toasts.Show(toastWarning, why)
+		return
+	}
 	reactionToggles.Lock()
 	defer reactionToggles.Unlock()
 	removedSame := false

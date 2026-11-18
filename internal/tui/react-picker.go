@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/gdamore/tcell/v2"
@@ -24,6 +25,7 @@ type ReactPicker struct {
 	eventID id.EventID
 	quick   []string
 	insert  bool
+	limits  *reactionLimits // what this chat accepts as reactions, read when the picker opens; nil = anything
 
 	sel       int
 	searching bool
@@ -40,7 +42,12 @@ type ReactPicker struct {
 }
 
 func (view *RoomView) OpenReactPicker(eventID id.EventID) {
-	view.picker = &ReactPicker{room: view, eventID: eventID, quick: quickReactions, cat: 1}
+	limits := view.reactionLimits()
+	if limits.none() {
+		toasts.Show(toastWarning, "Reactions are turned off in this chat")
+		return
+	}
+	view.picker = &ReactPicker{room: view, eventID: eventID, quick: limits.quick(quickReactions), limits: limits, cat: 1}
 }
 
 // OpenEmojiPicker is Ctrl+e: recent emoji, / to search, picks go into the composer.
@@ -91,8 +98,22 @@ func (p *ReactPicker) pick(key string) {
 
 func (p *ReactPicker) setQuery(q string) {
 	p.query = q
-	p.results = emoji.Search(q, 50)
+	if l := p.reactLimits(); l != nil {
+		// Search wider, then keep what the chat allows.
+		p.results = slices.DeleteFunc(emoji.Search(q, 500), func(m emoji.Match) bool { return !l.allows(m.Emoji) })
+		p.results = p.results[:min(len(p.results), 50)]
+	} else {
+		p.results = emoji.Search(q, 50)
+	}
 	p.sel, p.scroll = 0, 0
+}
+
+// reactLimits are the chat's reaction limits when reacting; inserting into the composer takes any emoji.
+func (p *ReactPicker) reactLimits() *reactionLimits {
+	if p.insert {
+		return nil
+	}
+	return p.limits
 }
 
 func (p *ReactPicker) OnKeyEvent(event mauview.KeyEvent) bool {
