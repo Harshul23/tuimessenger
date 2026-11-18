@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/tidwall/gjson"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -40,6 +41,7 @@ type fakeBridges struct {
 	queued        []*event.Event
 	older         func(roomID id.RoomID) (bool, error)
 	refuse        error // when set, the "network" rejects everything with this error
+	refused       []*event.Event
 	viewing       []id.RoomID
 	remote        map[string]string // direct media "still on the network", by file ID
 	fetches       int
@@ -55,6 +57,7 @@ func (f *fakeBridges) Queue(ctx context.Context, evt *event.Event) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	if f.refuse != nil {
+		f.refused = append(f.refused, evt)
 		return f.refuse
 	}
 	f.queued = append(f.queued, evt)
@@ -660,5 +663,90 @@ func TestDirectMediaDownload(t *testing.T) {
 	_, err = e.cli.DownloadBytes(ctx, id.ContentURI{Homeserver: server, FileID: media.DirectID("whatsapp", []byte("gone"))})
 	if !errors.Is(err, mautrix.MNotFound) {
 		t.Errorf("unknown direct media: %v", err)
+	}
+}
+
+// waitRefused waits until the bridge has refused an event with this ID; forward runs in the background.
+func (f *fakeBridges) waitRefused(t *testing.T, eventID id.EventID) {
+	t.Helper()
+	for range 100 {
+		f.lock.Lock()
+		for _, evt := range f.refused {
+			if evt.ID == eventID {
+				f.lock.Unlock()
+				time.Sleep(20 * time.Millisecond) // forward saves its follow-ups right after Queue returns
+				return
+			}
+		}
+		f.lock.Unlock()
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the bridge never got %s", eventID)
+}
+
+// failureFor reports whether a "failed" delivery status was saved for eventID.
+func failureFor(t *testing.T, st *store.Store, eventID id.EventID) bool {
+	t.Helper()
+	events, err := st.EventsSince(context.Background(), 0, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, evt := range events {
+		if evt.Type == event.BeeperMessageStatus && gjson.GetBytes(evt.Content.VeryRaw, `m\.relates_to.event_id`).Str == eventID.String() {
+			return true
+		}
+	}
+	return false
+}
+
+// A reaction the network rejects (Telegram: 😂 without Premium) is removed here too, so it no longer counts as
+// yours; taking back such a reaction later is done, not "not sent".
+func TestRejectedReactionRemoved(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	msg, err := e.cli.SendText(ctx, e.roomID, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	react := func(key string) id.EventID {
+		t.Helper()
+		resp, err := e.cli.SendReaction(ctx, e.roomID, msg.EventID, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.EventID
+	}
+
+	e.bridges.lock.Lock()
+	e.bridges.refuse = errors.New("rpc error code 400: REACTION_INVALID")
+	e.bridges.lock.Unlock()
+	rejected := react("😂")
+	e.bridges.waitRefused(t, rejected)
+	if redacted, err := e.store.IsRedacted(ctx, rejected); err != nil || !redacted {
+		t.Errorf("a rejected reaction should be removed here: redacted=%v %v", redacted, err)
+	}
+	if !failureFor(t, e.store, rejected) {
+		t.Error("the failure should still be reported, so the client can say why")
+	}
+
+	// A dead reaction from an older version: the bridge doesn't know it, so taking it back is just done here.
+	e.bridges.lock.Lock()
+	e.bridges.refuse = nil
+	e.bridges.lock.Unlock()
+	old := react("👍")
+	e.bridges.waitQueued(t, event.EventReaction)
+	e.bridges.lock.Lock()
+	e.bridges.refuse = fmt.Errorf("redaction %w", bridgev2.ErrTargetMessageNotFound)
+	e.bridges.lock.Unlock()
+	undo, err := e.cli.RedactEvent(ctx, e.roomID, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.bridges.waitRefused(t, undo.EventID)
+	if failureFor(t, e.store, undo.EventID) {
+		t.Error("taking back a reaction the network never had isn't a failure")
+	}
+	if redacted, _ := e.store.IsRedacted(ctx, old); !redacted {
+		t.Error("the reaction should be gone here")
 	}
 }
