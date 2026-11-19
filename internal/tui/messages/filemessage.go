@@ -22,6 +22,7 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -396,6 +397,23 @@ func (msg *FileMessage) CalculateBuffer(prefs config.UserPreferences, width int,
 	msg.buffer = ansFile.Render()
 	msg.linkLine = msg.makeLinkLine(prefs, width)
 	msg.captionLines = msg.makeCaption(prefs, width, uiMsg)
+	if !uiMsg.IsReplyBubble && (prefs.ImageProtocol == "" || prefs.ImageProtocol == "auto") {
+		noteLowResImages()
+	}
+}
+
+// OnLowResImages is called once per session, the first time an image is drawn in half-blocks because the terminal
+// can't show kitty graphics (not when you chose image_protocol: ansi, nor for reply previews, which always are).
+var OnLowResImages func()
+
+var lowResOnce sync.Once
+
+func noteLowResImages() {
+	lowResOnce.Do(func() {
+		if OnLowResImages != nil {
+			go OnLowResImages()
+		}
+	})
 }
 
 // Caption is the text sent with the media: the body when a filename is set
