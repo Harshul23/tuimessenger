@@ -199,6 +199,7 @@ type Message struct {
 	Time      time.Time      `json:"time"`
 	Kind      string         `json:"kind"` // text, image, video, audio, file, sticker, location, notice, emote
 	Text      string         `json:"text"`
+	File      string         `json:"file,omitempty"` // the file's name for media; text is then its caption, if any
 	ReplyTo   id.EventID     `json:"reply_to,omitempty"`
 	Edited    bool           `json:"edited,omitempty"`
 	Reactions map[string]int `json:"reactions,omitempty"`
@@ -271,6 +272,13 @@ func (r *Reader) message(ctx context.Context, evt *database.Event) *Message {
 	msg := &Message{
 		ID: evt.ID, Sender: r.senderName(ctx, evt.RoomID, evt.Sender), FromMe: evt.Sender == r.Account.UserID,
 		Time: evt.Timestamp.Time, Kind: kindOf(evtType, content.MsgType), Text: content.Body, Reactions: evt.Reactions,
+	}
+	if content.FileName != "" {
+		// Newer bridges put a file's name here; body is then the caption (often empty, e.g. a WhatsApp PDF).
+		msg.File = content.FileName
+		if msg.Text == content.FileName {
+			msg.Text = ""
+		}
 	}
 	if evt.SendError != "not sent" { // "not sent" = still on its way (see messages.SendFailed)
 		msg.Failed = evt.SendError

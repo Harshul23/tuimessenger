@@ -247,3 +247,20 @@ func TestOpenWithoutClient(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A WhatsApp document has its name in filename and an empty body: the agent gets the name as file.
+func TestFileName(t *testing.T) {
+	f := newFixture(t)
+	ids := f.room("!maya:x", "Maya", map[string]string{"whatsapp_15550100011": "Maya"}, [2]string{"whatsapp_15550100011", "x"})
+	pdf := `{"msgtype":"m.file","body":"","filename":"AI_Engineer_Interview_Questions.pdf","url":"mxc://x/a"}`
+	if _, err := f.db.Exec(f.ctx, "UPDATE event SET content=$1 WHERE event_id=$2", pdf, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := f.open().Messages(f.ctx, "!maya:x", 10)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("messages = %+v, %v", msgs, err)
+	}
+	if m := msgs[0]; m.Kind != "file" || m.File != "AI_Engineer_Interview_Questions.pdf" || m.Text != "" {
+		t.Errorf("got kind=%q file=%q text=%q", m.Kind, m.File, m.Text)
+	}
+}

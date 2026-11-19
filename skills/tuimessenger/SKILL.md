@@ -35,7 +35,8 @@ tuimessenger agent search -chat "whatsapp:Maya" invoice
 - If a name matches several chats you get `{"error": …, "matches": [...]}`. Pick by `network`/`direct` when the user's
   words make it clear, otherwise ask, then use the chat's `id`.
 - Messages have `sender` ("you" for the user), `from_me`, `time`, `kind` (text, image, video, audio, file, sticker…),
-  `text` (for media: the caption or file name), `reply_to` and `reactions`. You can't see media itself.
+  `text` (for media: the caption, which may be empty), `file` (a file's name, when the network sends one),
+  `reply_to` and `reactions`. You can't see media itself.
 - Reading never marks anything as read or tells anyone the user looked.
 
 ## Sending
