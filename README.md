@@ -16,6 +16,8 @@ https://github.com/user-attachments/assets/ae873a26-9749-4212-a7ee-1de875292123
 - **AI help when you want it:** let your coding agent read your chats and draft replies
   (`tuimessenger integration install claude`, `codex` or `opencode`).
 - **Light:** under 100 MB of RAM with all your networks connected, where desktop messengers often take 1.5–2 GB.
+- **Local only:** no server of ours in between; see [Security and privacy](#security-and-privacy) for what is and isn't
+  encrypted.
 
 > ⚠️ Bridges carry a risk of the network flagging or banning your account. Proceed with caution.
 
@@ -122,6 +124,23 @@ Every key can be changed in [`tuimessenger.yaml`](docs/config.md#keys).
   Settings → Notifications, and `tuimessenger.app` for the rest. The first notification from each asks for
   permission; closing that prompt with × counts as "Don't Allow". To turn them back on: System Settings →
   Notifications → the network's entry (e.g. WhatsApp) → Allow notifications.
+
+## Security and privacy
+
+- **No third-party server in between.** The bridges run inside tuimessenger on your machine and connect straight to
+  each network: WhatsApp with its end-to-end encryption (messages are decrypted on your machine, like on any linked
+  device), Telegram over MTProto, Slack and Instagram over HTTPS.
+- **Not encrypted at rest.** Chats, media and network sessions (keys and cookies, never passwords) sit unencrypted
+  in the [data folder](#where-things-are), readable only by your user. Use full-disk encryption (FileVault, LUKS).
+- **Logs are detailed** and can include message details. They're readable only by your user, but read through them
+  before attaching them to a bug report.
+- **The backend only listens on this computer** (`127.0.0.1:8008`) and needs the password you chose (only a bcrypt
+  hash of it is stored). AI agents use a token of their own (`agent-token`), and read only when you ask your agent.
+  Don't point `-listen` at a network address: the API has no TLS. To use a backend on another machine, reach it
+  through an SSH tunnel or Tailscale.
+- **What it can't protect against:** a program running as your user can read the data folder, as with any desktop
+  messenger. If you think a session leaked, log out in the Networks panel, or remove the session in the official app
+  (WhatsApp → Linked devices, Telegram → Active sessions); that makes the copied keys useless.
 
 ## Building
 
