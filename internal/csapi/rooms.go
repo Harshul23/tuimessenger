@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -131,10 +132,44 @@ func (s *Server) forward(evt *event.Event) {
 		s.Log.Warn().Err(err).Stringer("event_id", evt.ID).Msg("Failed to parse event for the bridge")
 	}
 	if err := s.Bridges.Queue(ctx, &bridged); err != nil {
+		if evt.Type == event.EventRedaction && errors.Is(err, bridgev2.ErrTargetMessageNotFound) && s.isReaction(ctx, evt.Redacts) {
+			// Taking back a reaction the network never got (it was rejected): removed here, nothing more to do.
+			s.Log.Debug().Stringer("event_id", evt.ID).Msg("Removed a reaction the network never had")
+			return
+		}
 		s.Log.Err(err).Stringer("event_id", evt.ID).Msg("Failed to hand event to the bridge")
 		if evt.StateKey == nil {
 			s.saveFailure(ctx, evt, err)
 		}
+		if evt.Type == event.EventReaction {
+			s.dropRejectedReaction(ctx, evt)
+		}
+	}
+}
+
+func (s *Server) isReaction(ctx context.Context, eventID id.EventID) bool {
+	target, err := s.Store.GetEvent(ctx, eventID)
+	return err == nil && target != nil && target.Type == event.EventReaction
+}
+
+// dropRejectedReaction removes a reaction the network refused, here only: kept, it would still count as yours,
+// and replacing it later would try to take back something the network never had.
+func (s *Server) dropRejectedReaction(ctx context.Context, reaction *event.Event) {
+	redaction := &event.Event{
+		ID:        id.EventID("$" + randomString(24) + ":" + s.ServerName),
+		RoomID:    reaction.RoomID,
+		Sender:    s.Owner,
+		Type:      event.EventRedaction,
+		Redacts:   reaction.ID,
+		Timestamp: time.Now().UnixMilli(),
+		Content:   event.Content{Parsed: &event.RedactionEventContent{Redacts: reaction.ID, Reason: "not delivered"}},
+	}
+	err := s.Store.Write(ctx, func(ctx context.Context, w *store.Writer) error {
+		_, err := w.AddEvent(ctx, redaction)
+		return err
+	})
+	if err != nil {
+		s.Log.Err(err).Stringer("event_id", reaction.ID).Msg("Failed to remove a rejected reaction")
 	}
 }
 

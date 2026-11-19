@@ -70,6 +70,8 @@ type Server struct {
 	viewingLock  sync.Mutex
 	viewingRoom  id.RoomID
 	viewingTimer *time.Timer
+	viewingQueue chan id.RoomID // changes for the bridges, in order (one worker)
+	viewingOnce  sync.Once
 }
 
 const (
