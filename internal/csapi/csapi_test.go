@@ -42,6 +42,7 @@ type fakeBridges struct {
 	older         func(roomID id.RoomID) (bool, error)
 	refuse        error // when set, the "network" rejects everything with this error
 	refused       []*event.Event
+	slowFirstView bool // the first SetViewing takes a while, as a slow network might
 	viewing       []id.RoomID
 	remote        map[string]string // direct media "still on the network", by file ID
 	fetches       int
@@ -128,6 +129,12 @@ func (f *fakeBridges) ReconnectUnhealthy(ctx context.Context) []string {
 }
 
 func (f *fakeBridges) SetViewing(ctx context.Context, roomID id.RoomID) {
+	f.lock.Lock()
+	slow := len(f.viewing) == 0 && f.slowFirstView
+	f.lock.Unlock()
+	if slow {
+		time.Sleep(50 * time.Millisecond) // a network taking its time with the first change
+	}
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	f.viewing = append(f.viewing, roomID)
@@ -565,6 +572,7 @@ func TestNoEncryption(t *testing.T) {
 
 func TestViewing(t *testing.T) {
 	e := setup(t)
+	e.bridges.slowFirstView = true // changes must still arrive in order
 	ctx := context.Background()
 	url := e.cli.BuildURL(mautrix.BaseURLPath{"_matrix", "client", "unstable", "com.tuimessenger", "viewing"})
 	view := func(roomID id.RoomID) {

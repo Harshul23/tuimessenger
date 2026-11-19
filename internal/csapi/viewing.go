@@ -44,10 +44,20 @@ func (s *Server) setViewing(roomID id.RoomID) {
 		return // nothing was open, so there's nothing to clear
 	}
 	s.viewingRoom = roomID
-	// Refreshes are passed on too: bridgev2 expects them, and networks only act when something changed.
-	go func() {
+	// Refreshes are passed on too: bridgev2 expects them, and networks only act when something changed. One worker
+	// keeps them in order: with a goroutine each, "open, close" could arrive as "close, open" and leave a chat open.
+	s.viewingOnce.Do(func() {
+		s.viewingQueue = make(chan id.RoomID, 32)
+		go s.forwardViewing()
+	})
+	s.viewingQueue <- roomID
+}
+
+// forwardViewing passes the open chat to the bridges, one change at a time, in the order they happened.
+func (s *Server) forwardViewing() {
+	for roomID := range s.viewingQueue {
 		ctx, cancel := context.WithTimeout(s.Log.WithContext(context.Background()), forwardTimeout)
-		defer cancel()
 		s.Bridges.SetViewing(ctx, roomID)
-	}()
+		cancel()
+	}
 }
