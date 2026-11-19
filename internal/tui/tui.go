@@ -137,6 +137,10 @@ func (ui *App) Run() {
 	exzerolog.SetupDefaults(log)
 	// Before the screen owns the terminal: ask it about kitty graphics when its name doesn't tell (e.g. herdr).
 	messages.DetectKittyGraphics(ui.Config.Preferences.ImageProtocol)
+	messages.OnLowResImages = func() {
+		toasts.Show(toastInfo, "Images are low-res here: this terminal doesn't show kitty graphics (Ghostty, kitty and "+
+			"WezTerm do). image_protocol: ansi hides this note.")
+	}
 	if ui.Backend == nil {
 		panic("tui: App.Backend must be set before Run")
 	}
