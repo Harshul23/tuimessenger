@@ -92,8 +92,9 @@ func (view *RoomView) onVisualKey(action string) bool {
 		return view.visualVerb(action, selected)
 	default:
 		if n, ok := strings.CutPrefix(action, "quick_react_"); ok && len(n) == 1 && n[0] >= '1' && int(n[0]-'1') < len(quickReactions) {
-			if selected != nil {
-				go view.ToggleReaction(selected.ID, quickReactions[n[0]-'1'])
+			// This chat's quick row: in Telegram chats, the reactions Telegram allows.
+			if quick := view.quickReactions(); selected != nil && int(n[0]-'1') < len(quick) {
+				go view.ToggleReaction(selected.ID, quick[n[0]-'1'])
 			}
 			done()
 			return true

@@ -29,8 +29,11 @@ func (p *ReactPicker) gridMode() bool {
 	return p.searching && p.query == ""
 }
 
-// tabIcons: recent first, then the categories.
-func tabIcons() []string {
+// tabIcons: recent first, then the categories; in a chat with limited reactions, just the ones it allows.
+func (p *ReactPicker) tabIcons() []string {
+	if l := p.reactLimits(); l != nil {
+		return []string{"🕘", l.allowed[0]}
+	}
 	icons := []string{"🕘"}
 	for _, c := range emoji.Categories() {
 		icon := categoryIcons[c.Name]
@@ -43,8 +46,12 @@ func tabIcons() []string {
 }
 
 func (p *ReactPicker) gridItems() []string {
+	l := p.reactLimits()
 	if p.cat <= 0 {
-		return recentEmoji.Top(recentEmojiMax)
+		return l.filter(recentEmoji.Top(recentEmojiMax))
+	}
+	if l != nil {
+		return l.allowed
 	}
 	cats := emoji.Categories()
 	if p.cat > len(cats) {
@@ -58,7 +65,7 @@ func (p *ReactPicker) gridItems() []string {
 }
 
 func (p *ReactPicker) switchTab(delta int) {
-	n := len(emoji.Categories()) + 1
+	n := len(p.tabIcons())
 	p.cat = ((p.cat+delta)%n + n) % n
 	p.gridSel, p.gridScroll = 0, 0
 }
@@ -177,7 +184,7 @@ func (p *ReactPicker) drawGrid(screen mauview.Screen) {
 		widget.WriteLinePadded(screen, mauview.AlignLeft, "", x-1, y, 4, hl)
 	}
 	tabsY := p.y + 2
-	for i, icon := range tabIcons() {
+	for i, icon := range p.tabIcons() {
 		if i >= gridCols {
 			break
 		}
@@ -213,7 +220,7 @@ func (p *ReactPicker) onGridClick(x, y int) bool {
 	}
 	tabsY := p.y + 2
 	switch {
-	case y == tabsY && col < len(tabIcons()):
+	case y == tabsY && col < len(p.tabIcons()):
 		p.switchTab(col - p.cat)
 		return true
 	case y > tabsY && y <= tabsY+gridRows:

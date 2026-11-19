@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -211,8 +213,96 @@ func (msg *FileMessage) NotificationContent() string {
 	}
 }
 
+// PlainText is the file's name and its caption, for copying and search. The download URL is left out: it's the
+// local backend's, which needs your login, so it only works from inside the app (Space opens the file).
 func (msg *FileMessage) PlainText() string {
-	return fmt.Sprintf("%s: %s", msg.Body, msg.matrix.GetDownloadURL(msg.URL, msg.IsEncrypted, true))
+	if caption := msg.Caption(); caption != "" {
+		return msg.DisplayName() + "\n" + caption
+	}
+	return msg.DisplayName()
+}
+
+// DisplayName is what to call the file: its filename, else the body (older bridges put the name there), else its
+// kind. Bridges like WhatsApp's send documents with the name in filename and an empty body when there's no caption.
+func (msg *FileMessage) DisplayName() string {
+	switch {
+	case msg.FileName != "":
+		return msg.FileName
+	case strings.TrimSpace(msg.Body) != "":
+		return msg.Body
+	}
+	switch {
+	case msg.IsSticker:
+		return "Sticker"
+	case msg.IsGIF:
+		return "GIF"
+	case msg.Type == event.MsgImage:
+		return "Image"
+	case msg.Type == event.MsgVideo:
+		return "Video"
+	case msg.Type == event.MsgAudio:
+		return "Audio"
+	}
+	return "File"
+}
+
+// fileIcons are Nerd Font file glyphs by kind (Font Awesome's file-*-o set).
+var fileIcons = map[string]string{
+	"pdf": "\uf1c1", "image": "\uf1c5", "audio": "\uf1c7", "video": "\uf1c8", "archive": "\uf1c6",
+	"doc": "\uf1c2", "sheet": "\uf1c3", "slides": "\uf1c4", "code": "\uf1c9", "file": "\uf15b",
+}
+
+// fileKind sorts a file into one of fileIcons' kinds, by type and then by extension.
+func (msg *FileMessage) fileKind() string {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(msg.DisplayName()), "."))
+	switch {
+	case msg.Type == event.MsgImage || strings.HasPrefix(msg.MimeType, "image/"):
+		return "image"
+	case msg.Type == event.MsgVideo || strings.HasPrefix(msg.MimeType, "video/"):
+		return "video"
+	case msg.Type == event.MsgAudio || strings.HasPrefix(msg.MimeType, "audio/"):
+		return "audio"
+	case ext == "pdf" || msg.MimeType == "application/pdf":
+		return "pdf"
+	}
+	switch ext {
+	case "zip", "rar", "7z", "tar", "gz", "tgz", "xz", "bz2":
+		return "archive"
+	case "doc", "docx", "odt", "rtf", "txt", "md", "pages":
+		return "doc"
+	case "xls", "xlsx", "ods", "csv", "numbers":
+		return "sheet"
+	case "ppt", "pptx", "odp", "key":
+		return "slides"
+	case "go", "py", "js", "ts", "json", "html", "css", "sh", "c", "cpp", "rs", "java", "yaml", "yml":
+		return "code"
+	}
+	return "file"
+}
+
+// fileLine is the one-line form of a file: "  AI_Engineer_Interview_Questions.pdf · PDF · 1.2 MB".
+func (msg *FileMessage) fileLine() string {
+	name := msg.DisplayName()
+	parts := []string{fileIcons[msg.fileKind()] + " " + name}
+	if ext := strings.TrimPrefix(filepath.Ext(name), "."); ext != "" && len(ext) <= 5 && ext != name {
+		parts = append(parts, strings.ToUpper(ext))
+	}
+	if msg.size > 0 {
+		parts = append(parts, humanFileSize(int64(msg.size)))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func humanFileSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
 }
 
 func (msg *FileMessage) String() string {
@@ -316,16 +406,11 @@ func (msg *FileMessage) CalculateBuffer(prefs config.UserPreferences, width int,
 	}
 
 	if prefs.BareMessageView || prefs.DisableImages || msg.imgW == 0 || msg.imgH == 0 {
-		url := msg.matrix.GetDownloadURL(msg.URL, msg.IsEncrypted, true)
-		var urlTString tstring.TString
-		if prefs.EnableInlineURLs() {
-			urlTString = tstring.NewStyleTString("Download media", tcell.StyleDefault.Url(url).UrlId(msg.eventID.String()))
-		} else {
-			urlTString = tstring.NewTString(url)
+		// The name, type and size; Space opens it. No download URL: it's the local backend's and needs your login.
+		text := tstring.NewTString(msg.fileLine())
+		if caption := msg.Caption(); caption != "" {
+			text = text.Append("\n" + caption)
 		}
-		text := tstring.NewTString(msg.Body).
-			Append(": ").
-			AppendTString(urlTString)
 		msg.buffer = calculateBufferWithText(prefs, text, width, uiMsg)
 		return
 	}
@@ -396,6 +481,23 @@ func (msg *FileMessage) CalculateBuffer(prefs config.UserPreferences, width int,
 	msg.buffer = ansFile.Render()
 	msg.linkLine = msg.makeLinkLine(prefs, width)
 	msg.captionLines = msg.makeCaption(prefs, width, uiMsg)
+	if !uiMsg.IsReplyBubble && (prefs.ImageProtocol == "" || prefs.ImageProtocol == "auto") {
+		noteLowResImages()
+	}
+}
+
+// OnLowResImages is called once per session, the first time an image is drawn in half-blocks because the terminal
+// can't show kitty graphics (not when you chose image_protocol: ansi, nor for reply previews, which always are).
+var OnLowResImages func()
+
+var lowResOnce sync.Once
+
+func noteLowResImages() {
+	lowResOnce.Do(func() {
+		if OnLowResImages != nil {
+			go OnLowResImages()
+		}
+	})
 }
 
 // Caption is the text sent with the media: the body when a filename is set

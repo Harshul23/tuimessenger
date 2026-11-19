@@ -300,8 +300,8 @@ Every action and its default keys, by table. Keys are written like `Ctrl+k`, `Al
 | `react` | `+` | React with any emoji |
 | `quick_react_1` | `1` | React with 👍 |
 | `quick_react_2` | `2` | React with ❤️ |
-| `quick_react_3` | `3` | React with 😂 |
-| `quick_react_4` | `4` | React with 😮 |
+| `quick_react_3` | `3` | React with 😂 (🤣 where 😂 isn't allowed, e.g. Telegram) |
+| `quick_react_4` | `4` | React with 😮 (😱 where 😮 isn't allowed) |
 | `quick_react_5` | `5` | React with 😢 |
 | `quick_react_6` | `6` | React with 🙏 |
 | `copy` | `y` | Copy it (a whole range after range) |
