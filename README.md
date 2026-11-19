@@ -130,10 +130,8 @@ Every key can be changed in [`tuimessenger.yaml`](docs/config.md#keys).
 - **No third-party server in between.** The bridges run inside tuimessenger on your machine and connect straight to
   each network: WhatsApp with its end-to-end encryption (messages are decrypted on your machine, like on any linked
   device), Telegram over MTProto, Slack and Instagram over HTTPS.
-- **Not encrypted at rest.** Your chats (`store.db`, `tui/client.db`), media, and each network's session (in
-  `<network>/bridge.db`: device keys, auth keys and session cookies, never your passwords) are stored unencrypted in
-  the [data folder](#where-things-are), whose folders only your user account can open. Use full-disk encryption
-  (FileVault, LUKS) so a lost or stolen computer exposes nothing, and keep backups of the data folder encrypted.
+- **Not encrypted at rest.** Chats, media and network sessions (keys and cookies, never passwords) sit unencrypted
+  in the [data folder](#where-things-are), readable only by your user. Use full-disk encryption (FileVault, LUKS).
 - **Logs are detailed** and can include message details. They're readable only by your user, but read through them
   before attaching them to a bug report.
 - **The backend only listens on this computer** (`127.0.0.1:8008`) and needs the password you chose (only a bcrypt
