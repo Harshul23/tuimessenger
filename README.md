@@ -161,6 +161,9 @@ the Homebrew formula (`.github/workflows/release.yml`).
 ## What's next
 
 - Signal.
+- Messenger
+- Weechat
+- Line
 - Running the backend on another machine, like a Raspberry Pi, with the terminal app connecting to it.
 - More Linux testing: it builds and runs on x86_64 and arm64, but most use so far is on macOS. Reports welcome.
 
