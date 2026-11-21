@@ -36,12 +36,22 @@ var ErrNoClient = errors.New("no tuimessenger client data here: run `tuimessenge
 type Reader struct {
 	db       *database.Database
 	path     string
+	dataDir  string
+	allow    *Allowlist
 	Account  *database.Account
 	nameMemo map[id.RoomID]map[id.UserID]string
 }
 
 // Open opens <dataDir>/tui/client.db read-only.
 func Open(ctx context.Context, dataDir string) (*Reader, error) {
+	allow, err := loadAllowlist(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return openWithAllowlist(ctx, dataDir, allow)
+}
+
+func openWithAllowlist(ctx context.Context, dataDir string, allow *Allowlist) (*Reader, error) {
 	path := filepath.Join(dataDir, "tui", "client.db")
 	if _, err := os.Stat(path); err != nil {
 		return nil, ErrNoClient
@@ -52,7 +62,7 @@ func Open(ctx context.Context, dataDir string) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening the client database: %w", err)
 	}
-	r := &Reader{db: database.New(raw), path: path, nameMemo: map[id.RoomID]map[id.UserID]string{}}
+	r := &Reader{db: database.New(raw), path: path, dataDir: dataDir, allow: allow, nameMemo: map[id.RoomID]map[id.UserID]string{}}
 	userID, err := r.db.Account.GetFirstUserID(ctx)
 	if err == nil && userID != "" {
 		r.Account, err = r.db.Account.Get(ctx, userID)
@@ -65,6 +75,41 @@ func Open(ctx context.Context, dataDir string) (*Reader, error) {
 }
 
 func (r *Reader) Close() error { return r.db.Close() }
+
+// Allowlist returns the loaded allowlist configuration.
+func (r *Reader) Allowlist() *Allowlist { return r.allow }
+
+// AllowlistPath returns the path to <dataDir>/agent-allowlist.
+func (r *Reader) AllowlistPath() string { return AllowlistPath(r.dataDir) }
+
+func (r *Reader) noAllowedChatsErr() error {
+	return fmt.Errorf("%w: add chat names (e.g. \"whatsapp:Group Name\") or room IDs (!...) to %s via `tuimessenger allowlist add`",
+		ErrNoAllowedChats, r.AllowlistPath())
+}
+
+func (r *Reader) allowedRoomIDs(ctx context.Context) (map[id.RoomID]bool, error) {
+	chats, err := r.Chats(ctx, false, 0)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[id.RoomID]bool, len(chats))
+	for _, c := range chats {
+		allowed[c.ID] = true
+	}
+	return allowed, nil
+}
+
+// CheckAllowed verifies that roomID is permitted by the allowlist.
+func (r *Reader) CheckAllowed(ctx context.Context, roomID id.RoomID) error {
+	allowed, err := r.allowedRoomIDs(ctx)
+	if err != nil {
+		return err
+	}
+	if !allowed[roomID] {
+		return fmt.Errorf("%w: %s", ErrChatNotAllowed, roomID)
+	}
+	return nil
+}
 
 // SyncedAt is when the client last wrote its database: data is as fresh as that.
 func (r *Reader) SyncedAt() time.Time {
@@ -92,6 +137,9 @@ type Chat struct {
 
 // Chats lists chats newest first, like the TUI's list (spaces and replaced rooms left out).
 func (r *Reader) Chats(ctx context.Context, unreadOnly bool, limit int) ([]*Chat, error) {
+	if r.allow.IsEmpty() {
+		return nil, r.noAllowedChatsErr()
+	}
 	rooms, err := r.db.Room.GetBySortTS(ctx, time.Now().Add(time.Hour), 100000)
 	if err != nil {
 		return nil, err
@@ -108,7 +156,10 @@ func (r *Reader) Chats(ctx context.Context, unreadOnly bool, limit int) ([]*Chat
 		if err != nil {
 			return nil, err
 		}
-		if chat != nil && (!unreadOnly || chat.Unread > 0 || chat.MarkedUnread) {
+		if chat == nil || !r.allow.MatchChat(chat) {
+			continue
+		}
+		if !unreadOnly || chat.Unread > 0 || chat.MarkedUnread {
 			out = append(out, chat)
 		}
 	}
@@ -208,6 +259,9 @@ type Message struct {
 
 // Messages returns a chat's newest messages, oldest first.
 func (r *Reader) Messages(ctx context.Context, roomID id.RoomID, limit int) ([]*Message, error) {
+	if err := r.CheckAllowed(ctx, roomID); err != nil {
+		return nil, err
+	}
 	var out []*Message
 	var before database.TimelineRowID
 	for len(out) < limit {
@@ -231,6 +285,25 @@ func (r *Reader) Messages(ctx context.Context, roomID id.RoomID, limit int) ([]*
 
 // Search finds messages containing every word (as word prefixes), newest first.
 func (r *Reader) Search(ctx context.Context, text string, rooms []id.RoomID, limit int) ([]*Message, error) {
+	allowedSet, err := r.allowedRoomIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(allowedSet) == 0 {
+		return []*Message{}, nil
+	}
+	if len(rooms) == 0 {
+		rooms = make([]id.RoomID, 0, len(allowedSet))
+		for roomID := range allowedSet {
+			rooms = append(rooms, roomID)
+		}
+	} else {
+		for _, roomID := range rooms {
+			if !allowedSet[roomID] {
+				return nil, fmt.Errorf("%w: %s", ErrChatNotAllowed, roomID)
+			}
+		}
+	}
 	var parts []string
 	for _, word := range strings.Fields(text) {
 		parts = append(parts, `"`+strings.ReplaceAll(word, `"`, `""`)+`"*`)
@@ -244,6 +317,9 @@ func (r *Reader) Search(ctx context.Context, text string, rooms []id.RoomID, lim
 	}
 	var out []*Message
 	for _, evt := range evts {
+		if !allowedSet[evt.RoomID] {
+			continue
+		}
 		if msg := r.message(ctx, evt); msg != nil && len(out) < limit {
 			msg.Chat = evt.RoomID
 			out = append(out, msg)

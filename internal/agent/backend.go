@@ -34,6 +34,7 @@ func TokenPath(dataDir string) string { return filepath.Join(dataDir, "agent-tok
 type Backend struct {
 	cli     *mautrix.Client
 	dataDir string
+	reader  *Reader
 }
 
 // NewBackend uses the backend address and user from the TUI's login, and the agent token if there is one.
@@ -47,7 +48,7 @@ func NewBackend(r *Reader, dataDir string) (*Backend, error) {
 		cli.AccessToken = strings.TrimSpace(string(token))
 		cli.DeviceID = DeviceID
 	}
-	return &Backend{cli: cli, dataDir: dataDir}, nil
+	return &Backend{cli: cli, dataDir: dataDir, reader: r}, nil
 }
 
 func (b *Backend) LoggedIn() bool { return b.cli.AccessToken != "" }
@@ -92,6 +93,11 @@ func (b *Backend) SendText(ctx context.Context, roomID id.RoomID, text string, w
 	if !b.LoggedIn() {
 		return nil, ErrNotLoggedIn
 	}
+	if b.reader != nil {
+		if err := b.reader.CheckAllowed(ctx, roomID); err != nil {
+			return nil, err
+		}
+	}
 	return b.send(ctx, roomID, &event.MessageEventContent{MsgType: event.MsgText, Body: text}, wait)
 }
 
@@ -100,6 +106,11 @@ func (b *Backend) SendText(ctx context.Context, roomID id.RoomID, text string, w
 func (b *Backend) SendFile(ctx context.Context, roomID id.RoomID, name string, raw []byte, caption string, wait time.Duration) (*SendResult, error) {
 	if !b.LoggedIn() {
 		return nil, ErrNotLoggedIn
+	}
+	if b.reader != nil {
+		if err := b.reader.CheckAllowed(ctx, roomID); err != nil {
+			return nil, err
+		}
 	}
 	content := upload.Content(name, raw)
 	resp, err := b.cli.UploadMedia(ctx, mautrix.ReqUploadMedia{ContentBytes: raw, ContentType: content.Info.MimeType, FileName: name})

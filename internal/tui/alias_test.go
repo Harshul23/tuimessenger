@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -21,6 +23,17 @@ import (
 // aliasMain is a store with Mariana (alias "sis") and Peter, newest first.
 func aliasMain(t *testing.T) *MainView {
 	t.Helper()
+	td := t.TempDir()
+	t.Setenv("HOME", td)
+	t.Setenv("XDG_CONFIG_HOME", td)
+	for _, sub := range []string{
+		filepath.Join(td, "Library", "Application Support", "tuimessenger"),
+		filepath.Join(td, ".local", "share", "tuimessenger"),
+		filepath.Join(td, "tuimessenger"),
+	} {
+		_ = os.MkdirAll(sub, 0o700)
+		_ = os.WriteFile(filepath.Join(sub, "agent-allowlist"), []byte("*\n"), 0o600)
+	}
 	gs := store.NewStore()
 	room := func(roomID id.RoomID, name string, age time.Duration, ad map[event.Type]*database.AccountData) *jsoncmd.SyncRoom {
 		return &jsoncmd.SyncRoom{

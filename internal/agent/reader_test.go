@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +35,9 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, AllowlistFileName), []byte("*\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "tui"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -262,5 +267,137 @@ func TestFileName(t *testing.T) {
 	}
 	if m := msgs[0]; m.Kind != "file" || m.File != "AI_Engineer_Interview_Questions.pdf" || m.Text != "" {
 		t.Errorf("got kind=%q file=%q text=%q", m.Kind, m.File, m.Text)
+	}
+}
+
+func TestAllowlistDefaultsAndAdmin(t *testing.T) {
+	f := newFixture(t)
+	// Remove the wildcard allowlist file created by newFixture so dataDir is uninitialized
+	allowPath := AllowlistPath(f.dir)
+	if err := os.Remove(allowPath); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultID := id.RoomID(DefaultAllowedRooms[0])
+	f.room(defaultID, "VST 25-29 Official", map[string]string{"whatsapp_15550100011": "Admin"},
+		[2]string{"whatsapp_15550100011", "official announcement"})
+	f.room("!wa_group:x", "Project Alpha", map[string]string{"whatsapp_15550100022": "Alice"},
+		[2]string{"whatsapp_15550100022", "deploy is green"})
+	f.room("!private_dm:x", "Secret DM", map[string]string{"whatsapp_15550100033": "Bob"},
+		[2]string{"whatsapp_15550100033", "bank password is 1234"})
+	f.room("!ig_group:x", "Project Alpha", map[string]string{"instagram_100000000031": "Carol"},
+		[2]string{"instagram_100000000031", "wrong network same name"})
+
+	// 1. Uninitialized dataDir: defaults strictly to DefaultAllowedRooms
+	r := f.open()
+	if !slices.Equal(r.Allowlist().Rules(), DefaultAllowedRooms) {
+		t.Fatalf("rules = %v, want DefaultAllowedRooms %v", r.Allowlist().Rules(), DefaultAllowedRooms)
+	}
+	chats, err := r.Chats(f.ctx, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 || chats[0].ID != defaultID {
+		t.Fatalf("Chats() with default allowlist = %+v, want only %s", chats, defaultID)
+	}
+	if _, err := r.Messages(f.ctx, "!private_dm:x", 10); !errors.Is(err, ErrChatNotAllowed) {
+		t.Fatalf("Messages(private_dm) = %v, want ErrChatNotAllowed", err)
+	}
+
+	// 2. LookupUnfiltered discovers chats without allowlist restriction
+	allFound, err := LookupUnfiltered(f.ctx, f.dir, "")
+	if err != nil || len(allFound) != 4 {
+		t.Fatalf("LookupUnfiltered(empty) = %+v, err=%v; want 4 chats", allFound, err)
+	}
+
+	lookupWa, err := LookupUnfiltered(f.ctx, f.dir, "!wa_group:x")
+	if err != nil || len(lookupWa) != 1 || lookupWa[0].ID != "!wa_group:x" {
+		t.Fatalf("LookupUnfiltered(!wa_group:x) = %+v, %v", lookupWa, err)
+	}
+
+	lookupSub, err := LookupUnfiltered(f.ctx, f.dir, "Secret")
+	if err != nil || len(lookupSub) != 1 || lookupSub[0].ID != "!private_dm:x" {
+		t.Fatalf("LookupUnfiltered(Secret) = %+v, %v", lookupSub, err)
+	}
+
+	// 3. AddAllowlistRoom:
+	// 3a. Ambiguous match fails
+	if _, err := AddAllowlistRoom(f.ctx, f.dir, "Project Alpha"); err == nil {
+		t.Fatal("AddAllowlistRoom(Project Alpha) succeeded, want AmbiguousError")
+	} else {
+		var amb *AmbiguousError
+		if !errors.As(err, &amb) || len(amb.Matches) != 2 {
+			t.Fatalf("expected AmbiguousError with 2 matches, got: %v", err)
+		}
+	}
+
+	// 3b. Not found fails
+	if _, err := AddAllowlistRoom(f.ctx, f.dir, "NonExistentRoom"); err == nil {
+		t.Fatal("AddAllowlistRoom(NonExistentRoom) succeeded, want error")
+	}
+
+	// 3c. Unambiguous match adds room and materializes file with 0600 permissions
+	added, err := AddAllowlistRoom(f.ctx, f.dir, "whatsapp:Project Alpha")
+	if err != nil || added.ID != "!wa_group:x" {
+		t.Fatalf("AddAllowlistRoom(whatsapp:Project Alpha) = %v, %v; want !wa_group:x", added, err)
+	}
+
+	info, err := os.Stat(allowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("allowlist file mode = %o, want 0600", perm)
+	}
+
+	// Verify deduplication: adding again doesn't duplicate
+	if _, err := AddAllowlistRoom(f.ctx, f.dir, "!wa_group:x"); err != nil {
+		t.Fatal(err)
+	}
+	rulesRaw, _ := os.ReadFile(allowPath)
+	lines := strings.Split(strings.TrimSpace(string(rulesRaw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines in allowlist after dedup, got %d (%v)", len(lines), lines)
+	}
+
+	// Reopen and verify newly allowed room is visible
+	r2 := f.open()
+	chats2, err := r2.Chats(f.ctx, false, 0)
+	if err != nil || len(chats2) != 2 {
+		t.Fatalf("Chats after add = %+v, err=%v", chats2, err)
+	}
+
+	// 4. RemoveAllowlistEntry:
+	// Remove !wa_group:x by query
+	removed, err := RemoveAllowlistEntry(f.ctx, f.dir, "whatsapp:Project Alpha")
+	if err != nil || len(removed) != 1 || removed[0] != "!wa_group:x" {
+		t.Fatalf("RemoveAllowlistEntry = %v, %v; want [!wa_group:x]", removed, err)
+	}
+
+	// Remove default room to reach empty state
+	removedDefault, err := RemoveAllowlistEntry(f.ctx, f.dir, string(defaultID))
+	if err != nil || len(removedDefault) != 1 || removedDefault[0] != string(defaultID) {
+		t.Fatalf("RemoveAllowlistEntry(defaultID) = %v, %v; want [%s]", removedDefault, err, defaultID)
+	}
+
+	// File still exists on disk with 0600 permissions but is empty
+	infoEmpty, err := os.Stat(allowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := infoEmpty.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("empty allowlist file mode = %o, want 0600", perm)
+	}
+	if infoEmpty.Size() != 0 {
+		t.Fatalf("empty allowlist file size = %d, want 0", infoEmpty.Size())
+	}
+
+	// 5. Fail-closed: 0 rules configured
+	rEmpty := f.open()
+	if _, err := rEmpty.Chats(f.ctx, false, 0); !errors.Is(err, ErrNoAllowedChats) {
+		t.Fatalf("Chats on empty allowlist = %v, want ErrNoAllowedChats", err)
+	}
+	if err := rEmpty.CheckAllowed(f.ctx, defaultID); !errors.Is(err, ErrChatNotAllowed) && !errors.Is(err, ErrNoAllowedChats) {
+		t.Fatalf("CheckAllowed on empty allowlist = %v, want ErrNoAllowedChats or ErrChatNotAllowed", err)
 	}
 }

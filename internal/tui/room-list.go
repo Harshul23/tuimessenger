@@ -17,8 +17,11 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
@@ -27,6 +30,7 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/whyyor/tuimessenger/internal/agent"
 	"github.com/whyyor/tuimessenger/internal/hicli/database"
 	"github.com/whyyor/tuimessenger/internal/rpc/store"
 	"github.com/whyyor/tuimessenger/internal/tui/widget"
@@ -126,7 +130,7 @@ func (list *RoomList) BrowseStep(down bool) id.RoomID {
 	// sidebar is hidden.
 	if list.parent != nil {
 		list.lock.Lock()
-		list.rooms = applyLocalSeen(list.parent.matrix, listedRooms(list.parent.matrix.ReversedRoomList.Current(), list.selected))
+		list.rooms = filterAllowedRoomEntries(applyLocalSeen(list.parent.matrix, listedRooms(list.parent.matrix.ReversedRoomList.Current(), list.selected)))
 		list.lock.Unlock()
 	}
 	var next id.RoomID
@@ -228,7 +232,7 @@ func (list *RoomList) IsMuted(roomID id.RoomID) bool {
 // UnreadRooms is the hint screen's list: see unreadRooms.
 func (list *RoomList) UnreadRooms() []*store.RoomListEntry {
 	muted := list.mutedSet()
-	return unreadRooms(applyLocalSeen(list.parent.matrix, listedRooms(list.parent.matrix.ReversedRoomList.Current(), "")), muted)
+	return unreadRooms(filterAllowedRoomEntries(applyLocalSeen(list.parent.matrix, listedRooms(list.parent.matrix.ReversedRoomList.Current(), ""))), muted)
 }
 
 // unreadRooms keeps chats with unread messages (or marked unread) that
@@ -246,7 +250,7 @@ func unreadRooms(rooms []*store.RoomListEntry, muted map[id.RoomID]bool) []*stor
 
 func (list *RoomList) Draw(screen mauview.Screen) {
 	list.lock.Lock()
-	list.rooms = applyLocalSeen(list.parent.matrix, listedRooms(list.parent.matrix.ReversedRoomList.Current(), list.selected))
+	list.rooms = filterAllowedRoomEntries(applyLocalSeen(list.parent.matrix, listedRooms(list.parent.matrix.ReversedRoomList.Current(), list.selected)))
 	list.width, list.height = screen.Size()
 	roomSlice := list.rooms[min(len(list.rooms), list.scrollOffset):min(len(list.rooms), list.scrollOffset+list.height)]
 	muted := list.mutedSet()
@@ -325,4 +329,74 @@ func (list *RoomList) Draw(screen mauview.Screen) {
 		writeNameAlias(screen, 3, y, nameMax, room.Name, list.parent.showAlias(room.RoomID), rowStyle, aliasDim(rowStyle))
 	}
 
+}
+
+// filterAllowedRoomEntries filters the TUI room list using agent-allowlist (or DefaultAllowedRooms if uninitialized).
+func filterAllowedRoomEntries(rooms []*store.RoomListEntry) []*store.RoomListEntry {
+	raw, active := loadTUIAllowlistRaw()
+	if !active {
+		return rooms
+	}
+	var rules []string
+	for _, line := range strings.Split(raw, "\n") {
+		if idx := strings.Index(line, " #"); idx >= 0 {
+			line = line[:idx]
+		}
+		for _, part := range strings.Split(line, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" && !strings.HasPrefix(part, "#") && !strings.HasPrefix(part, "//") {
+				if part == "*" {
+					return rooms
+				}
+				rules = append(rules, part)
+			}
+		}
+	}
+	if len(rules) == 0 {
+		return nil
+	}
+	var out []*store.RoomListEntry
+	for _, r := range rooms {
+		if matchRoomEntryRule(r, rules) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func matchRoomEntryRule(r *store.RoomListEntry, rules []string) bool {
+	for _, rule := range rules {
+		if strings.HasPrefix(rule, "!") {
+			if string(r.RoomID) == rule {
+				return true
+			}
+			continue
+		}
+		if before, after, ok := strings.Cut(rule, ":"); ok && !strings.Contains(before, " ") && strings.TrimSpace(after) != "" {
+			if strings.EqualFold(r.Bridge, strings.TrimSpace(before)) && strings.EqualFold(r.Name, strings.TrimSpace(after)) {
+				return true
+			}
+			continue
+		}
+		if strings.EqualFold(r.Name, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+func loadTUIAllowlistRaw() (string, bool) {
+	var candidates []string
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		candidates = append(candidates, filepath.Join(cfgDir, "tuimessenger", "agent-allowlist"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".local", "share", "tuimessenger", "agent-allowlist"))
+	}
+	for _, p := range candidates {
+		if b, err := os.ReadFile(p); err == nil {
+			return string(b), true
+		}
+	}
+	return strings.Join(agent.DefaultAllowedRooms, "\n"), true
 }

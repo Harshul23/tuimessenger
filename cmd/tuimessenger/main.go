@@ -43,6 +43,8 @@ func main() {
 			os.Exit(runTUI(os.Args[2:]))
 		case "agent":
 			os.Exit(runAgent(os.Args[2:]))
+		case "allowlist":
+			os.Exit(runAllowlist(os.Args[2:]))
 		case "integration":
 			os.Exit(runIntegration(os.Args[2:]))
 		case "--skill", "-skill":
@@ -176,7 +178,7 @@ func serve(ctx context.Context, log zerolog.Logger, a *server.Backend, addr stri
 
 func defaultDataDir() string { return server.DefaultDataDir() }
 
-func isTerminal() bool {
+var isTerminal = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 

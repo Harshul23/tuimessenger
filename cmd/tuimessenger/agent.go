@@ -28,9 +28,11 @@ const agentUsage = `tuimessenger agent: your chats for scripts and AI agents. Ou
   tuimessenger agent search [-chat CHAT] [-limit N] TEXT
   tuimessenger agent send CHAT TEXT -yes [-wait 15s] send a text message (without -yes: only shows what would be sent)
   tuimessenger agent send CHAT [CAPTION] -file PATH -yes   send a file (photo, video, audio or any file, up to 100 MB)
+  tuimessenger agent allowlist                       view allowed chats (managed via tuimessenger allowlist)
   tuimessenger agent login                           the agent's own login (asks for the backend password once)
   tuimessenger agent logout                          revoke that login
 
+Only chats listed in <dataDir>/agent-allowlist are visible to the agent (managed via tuimessenger allowlist).
 CHAT is a chat id (!…), a name or alias ("Maya"), or network:name ("whatsapp:Maya").
 Every command takes -data DIR (default: tuimessenger's data folder). Reading works with the TUI closed;
 sending needs the backend running. Data is as fresh as the TUI's last sync ("synced_at").`
@@ -68,9 +70,16 @@ func runAgent(args []string) int {
 		if err != nil {
 			return agentFail(err)
 		}
+		allowedChats, _ := r.Chats(ctx, false, 0)
+		for _, c := range allowedChats {
+			c.LastMessage = nil
+		}
 		return agentOut(map[string]any{
 			"backend": r.Account.HomeserverURL, "user": r.Account.UserID, "logged_in": b.LoggedIn(),
 			"backend_running": b.Running(ctx), "synced_at": r.SyncedAt(),
+			"allowlist_file": r.AllowlistPath(),
+			"allowed_rules":  nonNil(r.Allowlist().Rules()),
+			"allowed_chats":  nonNil(allowedChats),
 		})
 	case "chats":
 		chats, err := r.Chats(ctx, *unread, *limit)
@@ -151,6 +160,22 @@ func runAgent(args []string) int {
 			return 1
 		}
 		return out
+	case "allowlist":
+		if len(pos) > 0 {
+			return agentFail(errors.New("usage: tuimessenger agent allowlist"))
+		}
+		matched, err := r.Chats(ctx, false, 0)
+		if err != nil && !errors.Is(err, agent.ErrNoAllowedChats) {
+			return agentFail(err)
+		}
+		for _, c := range matched {
+			c.LastMessage = nil
+		}
+		return agentOut(map[string]any{
+			"allowlist_file": r.AllowlistPath(),
+			"rules":          nonNil(r.Allowlist().Rules()),
+			"matched_chats":  nonNil(matched),
+		})
 	case "login":
 		b, err := agent.NewBackend(r, *dataDir)
 		if err != nil {
