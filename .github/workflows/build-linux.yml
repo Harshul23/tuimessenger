@@ -1,0 +1,41 @@
+name: Build Linux x86_64 Binary
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install C build dependencies (libolm)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libolm-dev gcc pkg-config
+
+      - name: Build Linux amd64 binary
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          go build -tags "goolm sqlite_fts5" -ldflags="-s -w" -o tuimessenger-linux-amd64 .
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest-linux
+          name: Linux x86_64 Build
+          files: tuimessenger-linux-amd64
